@@ -1,2 +1,3 @@
-# rdt_fileshare
-A simple client server CLI file sharing app that implements Reliable Data Transfer over an UDP socket
+# rdt_fileshare: RDT over UDP client/server CLI app for filesharing
+
+This is a simple client/server application written in C, which implements Go Back N protocol in its own `read()`, `write()` functions to reliably send data with a UDP socket.
