@@ -33,6 +33,9 @@ int receive_file(int socket_fd, const char* file_name, const char* destination_d
 	filesizestr = malloc(15*sizeof(char));
 	rcvdstr = malloc(15*sizeof(char));
 
+	memset(filesizestr, 0, 15*sizeof(char));
+	memset(rcvdstr, 0, 15*sizeof(char));
+
 	sprintf(message, "RDYRCV");
 	sprintf(file_path, "%s%s", destination_dir_path, file_name);
 

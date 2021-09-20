@@ -142,6 +142,5 @@ int connect_to_server() {
 		return -1;
 	}
 
-	//return connect(socketfd, (struct sockaddr *) &servaddr, sizeof(servaddr));
 	return gbn_connect(socket_fd, (struct sockaddr *) &servaddr, sizeof(servaddr));
 }

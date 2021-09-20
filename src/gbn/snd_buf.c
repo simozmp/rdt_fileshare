@@ -1,18 +1,24 @@
 #include "gbn/snd_buf.h"
+#include "gbn/gbn_utils.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <errno.h>
 
+//	List node
 struct bufnode_t{
-	datapkt_t pkt;
-	struct bufnode_t *next;
+	datapkt_t pkt;					//	datapkt
+	struct timespec snd_time;		//	Time of last send attempt for the pkt
+	struct bufnode_t *next;			//	Pointer to the next node
 };
 
-
+//	An integer to keep the total number of pkt nodes in the list
 int snd_buf_capacity = 0;
+
+//	An integer to keep the number of valid pkts in the list
 int snd_buf_len = 0;
 
+//	Pointers to the head and tail nodes
 struct bufnode_t* snd_buffer_tail = NULL;
 struct bufnode_t* snd_buffer_head = NULL;
 
@@ -26,9 +32,7 @@ int snd_buffer_init(int size) {
 	
 	int return_value;
 
-	if(snd_buf_capacity == 0) {
-
-		//	Init
+	if(snd_buf_capacity == 0) {		//	Init
 
 		//	Creating first node
 		snd_buffer_head = (struct bufnode_t*) malloc(sizeof(struct bufnode_t));
@@ -69,14 +73,14 @@ int snd_buffer_init(int size) {
 int snd_buffer_destroy() {
 	
 	int return_value;
-	struct bufnode_t *new_head;
+	struct bufnode_t *next_head;
 
 	if(snd_buf_capacity > 0) {
 
 		for(int i = 0; i<snd_buf_capacity; i++) {
-			new_head = snd_buffer_head->next;
+			next_head = snd_buffer_head->next;
 			free(snd_buffer_head);
-			snd_buffer_head = new_head;
+			snd_buffer_head = next_head;
 		}
 
 		return_value = snd_buf_capacity = 0;
@@ -88,8 +92,10 @@ int snd_buffer_destroy() {
 }
 
 /*
- *	This functions appends the pkt as a new bufnode into the buffer
+ *	This functions appends the pkt as a new bufnode into the buffer.
  *
+ *	Returns 0 in case of success, -1 in case of error (errno is set
+ *	appropriately in this case).
  *
  */
 int snd_buffer_push(datapkt_t *new_pkt) {
@@ -99,11 +105,10 @@ int snd_buffer_push(datapkt_t *new_pkt) {
 
 	errno = 0;		//	Zero out errno
 
+	//	Buffer not init-ed check
 	if(snd_buf_capacity > 0) {
-		if(snd_buf_len == snd_buf_capacity) {
-			errno = ENOBUFS;
-			return_value = -1;
-		} else {
+		//	Buffer full check
+		if(snd_buf_len < snd_buf_capacity) {
 			//	Reaching the first empty node
 			cursor = snd_buffer_head;
 			for(int i=0; i<snd_buf_len; i++)
@@ -115,26 +120,38 @@ int snd_buffer_push(datapkt_t *new_pkt) {
 			snd_buf_len++;
 
 			return_value = 0;
+		} else {
+			errno = ENOBUFS;
+			return_value = -1;
 		}
 
 	} else {
 		errno = EIO;
-		printf("Buffer not init'ed!\n");
+		log_write("snd_buf(): Buffer not init'ed!\n");
 		return_value = -1;
 	}
 
 	return return_value;
 }
 
+/*
+ *	Saves a snd_buf presentation string into the result buffer.
+ *	Pkts are represented with their seqn.
+ *
+ *	Returns the pointer to result.
+ *
+ */
 char* snd_buf_p(char* result) {
 
 	int i;
 	struct bufnode_t* cursor;
 
-	//	Allocate space for the final message, a string containing 7 characters
-	//	(maximum, in case of integers between 100~999) for each of the middle nodes
-	//	(for the last one even less than 7 chars)
-	//char* result = malloc(sizeof(char)*((snd_buf_capacity * 10)+1));
+	/*
+	 *	Allocate space for a partial presentation, a string containing 8 characters
+	 *	(maximum, in case of integers between 1000~9999) for each of the middle nodes
+	 *	(for the last one even less than 8 chars). It is used to prevent sprintf
+	 *	issues by overlapping source and destination
+	 */
 	char* partial_result = malloc(sizeof(char)*((snd_buf_capacity * 10)+1));
 
 	result[0] = '\0';
@@ -189,10 +206,25 @@ int snd_buf_get(datapkt_t *pkt, int offset) {
 	return return_value;
 }
 
-int snd_buf_ack(int ack_seqn) {
-	int i, return_value = -1;
+/*
+ *	This functions acks the packet with ack_seqn from the buffer. This results
+ *	in deleting each packet in the buffer, up to the acked packet (included).
+ *
+ *	The function returns a struct timespec value, which represents the RTT
+ *	(in-flight time) of the acked packet.
+ *
+ *	If no pkt with given seqn is found in the list, all the fields in the returning
+ *	structure will be set to 0
+ *
+ */
+struct timespec snd_buf_ack(int ack_seqn) {
+	int i;
+	struct timespec return_value, now;
 
-	errno = 0;		//	Zeroing out errno
+	timespec_get(&now, TIME_UTC);
+
+	return_value.tv_nsec = 0;
+	return_value.tv_sec = 0;
 
 	//	For each node in the buffer
 	for(i=0; i < snd_buf_len; i++)
@@ -205,7 +237,9 @@ int snd_buf_ack(int ack_seqn) {
 			//	When matching seqn, reduce the lenght by (i+1) nodes
 			snd_buf_len -= (i+1);
 
-			return_value = 0;
+			//	Collect the RTT information by calculating "now - snd_time"
+			return_value = ts_diff(now, snd_buffer_head->snd_time);
+
 			break;
 		}
 
@@ -213,6 +247,37 @@ int snd_buf_ack(int ack_seqn) {
 	//	(or to restore initial state if matching seqn not found)
 	snd_buffer_head = snd_buffer_head->next;
 	snd_buffer_tail = snd_buffer_tail->next;
+
+	return return_value;
+}
+
+/*
+ *	This functions marks the packet with given seqn as sent,
+ *	with current timestamp. This is gonna be called asap after a packet send.
+ *
+ *	The function returns -1 if no pkt with given seqn is found, or 0
+ *	in case of success
+ *
+ */
+int snd_buf_mark_snt(int seqn_to_mark) {
+	int i, return_value = -1;
+
+	//	Starting with a cursor pointing to the head node
+	struct bufnode_t *cursor = snd_buffer_head;
+
+	//	For each valid node in the buffer
+	for(i=0; i < snd_buf_len; i++)
+		//	Compare the seqn
+		if(cursor->pkt.seqn != seqn_to_mark) {
+			//	Rotate the list of 1 node if seqn not matching
+			cursor = cursor->next;
+		} else {
+			//	When matching seqn, reduce the lenght by (i+1) nodes
+			timespec_get(&cursor->snd_time, TIME_UTC);
+
+			return_value = 0;
+			break;
+		}
 
 	return return_value;
 }

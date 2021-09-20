@@ -5,11 +5,15 @@
 #define PCKDATASIZE 65400 //65506
 // Window size
 #define WIN 5
-// Timeout
-#define TIMEOUT 50
+// Timeout (seconds and nanoseconds)
+#define TIMEOUT_NS 50000000
+#define TIMEOUT_S 0
 // Incoming data buffer size
 #define BUFFERSIZE PCKDATASIZE*WIN*2
 // Incoming data buffer size
-#define LOSS_PROB 0.4
+#define LOSS_PROB 0.2
+
+#define ALPHA 0.125
+#define BETA 0.25
 
 #endif

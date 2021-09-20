@@ -47,8 +47,9 @@ int log_write(char* message) {
 	if(logfd == NULL)
 		return_value = -1;
 	else {
-		timestamp(timestring);
+		timetostr(timestring);
 		fprintf(logfd, "[%s]\t%s\n", timestring, message);
+		fflush(logfd);
 	}
 
 	free(timestring);
@@ -67,7 +68,7 @@ int log_println() {
 	return return_value;
 }
 
-int timestamp(char* buffer) {
+int timetostr(char* buffer) {
 
 	struct tm *long_time;
 
@@ -86,4 +87,78 @@ int timestamp(char* buffer) {
 												short_time.tv_nsec/10000);
 
 	return 0;
+}
+
+
+
+struct timespec ts_sum(struct timespec t1, struct timespec t2) {
+	struct timespec result;
+
+	result.tv_sec = t1.tv_sec + t2.tv_sec;
+
+	if(t1.tv_nsec + t2.tv_nsec > 999999999)
+		result.tv_sec++;
+
+	result.tv_nsec = (t1.tv_nsec + t2.tv_nsec) % 999999999;
+
+	return result;
+}
+
+struct timespec ts_abs_diff(struct timespec t1, struct timespec t2) {
+	struct timespec result;
+	int max = ts_max(t1,t2);
+
+	if(max == 1) {
+		result = ts_diff(t1, t2);
+	} else if(max == 2) {
+		result = ts_diff(t2, t1);
+	} else {
+		result.tv_nsec = 0;
+		result.tv_sec = 0;
+	}
+
+	return result;
+}
+
+struct timespec ts_diff(struct timespec t1, struct timespec t2) {
+	struct timespec result;
+
+	if(t1.tv_nsec - t2.tv_nsec < 0) {
+		result.tv_nsec = t1.tv_nsec - t2.tv_nsec + 1000000000;
+		result.tv_sec = t1.tv_sec - t2.tv_sec - 1;
+	} else {
+		result.tv_nsec = t1.tv_nsec - t2.tv_nsec;
+		result.tv_sec = t1.tv_sec - t2.tv_sec;
+	}
+
+	return result;
+}
+
+struct timespec ts_times(struct timespec ts, double factor) {
+	struct timespec result;
+
+	double sec = ts.tv_sec*factor;
+
+	//	Truncating double to get the floor of sec
+	result.tv_sec = (int) sec;
+
+	result.tv_nsec = ((long int)(ts.tv_nsec*factor)) % 999999999 + 1000000000*(sec - ((int) sec));
+
+	result.tv_sec += (int) ts.tv_nsec*factor /1000000000;
+
+	return result;
+}
+
+int ts_max(struct timespec t1, struct timespec t2) {
+
+	if(t1.tv_sec > t2.tv_sec)
+		return 1;
+	else if(t1.tv_sec < t2.tv_sec)
+		return 2;
+	else if(t1.tv_nsec > t2.tv_nsec)
+		return 1;
+	else if(t1.tv_nsec < t2.tv_nsec)
+		return 2;
+	else
+		return 0;
 }
