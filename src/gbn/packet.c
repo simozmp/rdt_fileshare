@@ -14,17 +14,25 @@ uint16_t service_checksum(servicepkt_t *packet);
  *	Initializes the datapkt pointed by packet with given attributes
  *
  */
-void make_datapkt(int seq, void *message, size_t message_len,
+int make_datapkt(int seq, void *message, size_t message_len,
 		datapkt_t* packet) {
 
-	// Put zeros in packet's memory
-	memset(packet, 0, sizeof(datapkt_t));
+	int return_value = 0;
 
-	packet->type = DATA;
-	packet->seqn = seq;
-	packet->len = message_len;
-	memcpy(packet->payload, message, message_len);
-	packet->checksum = data_checksum(packet);
+	if(packet == NULL) {
+		return_value = -1;
+	} else {
+		// Put zeros in packet's memory
+		memset(packet, 0, sizeof(datapkt_t));
+
+		packet->type = DATA;
+		packet->seqn = seq;
+		packet->len = message_len;
+		memcpy(packet->payload, message, message_len);
+		packet->checksum = data_checksum(packet);
+	}
+
+	return return_value;
 }
 
 /*
@@ -32,21 +40,30 @@ void make_datapkt(int seq, void *message, size_t message_len,
  *	(if type not valid, does nothing)
  *
  */
-void make_servicepkt(int seq, const int type, servicepkt_t* packet) {
+int make_servicepkt(int seq, const int type, servicepkt_t* packet) {
 
-	switch(type) {
-		case ACK:
-		case SYN:
-		case SYNACK:
-		case FIN:
-			// Put zeros in packet's memory
-			memset(packet, 0, sizeof(servicepkt_t));
+	int return_value = 0;
 
-			packet->type = type;
-			packet->seqn = seq;
-			packet->checksum = service_checksum(packet);
-			break;
+	if(packet == NULL) {
+		return_value = -1;
+	} else {
+		switch(type) {
+			case ACK:
+			case SYN:
+			case SYNACK:
+			case FIN:
+			case FINACK:
+				// Put zeros in packet's memory
+				memset(packet, 0, sizeof(servicepkt_t));
+
+				packet->type = type;
+				packet->seqn = seq;
+				packet->checksum = service_checksum(packet);
+				break;
+		}
 	}
+
+	return return_value;
 }
 
 /*
@@ -55,7 +72,7 @@ void make_servicepkt(int seq, const int type, servicepkt_t* packet) {
  */
 int verify_datapkt(datapkt_t *pkt) {
 
-	int return_value = (data_checksum(pkt) == pkt->checksum) ? 1 : 0;
+	int return_value = (data_checksum(pkt) == pkt->checksum) ? 0 : -1;
 
 	return return_value;
 }
@@ -66,10 +83,10 @@ int verify_datapkt(datapkt_t *pkt) {
  */
 int verify_servicepkt(servicepkt_t *pkt) {
 
-	return (service_checksum(pkt) == pkt->checksum) ? 1 : 0;
+	return (service_checksum(pkt) == pkt->checksum) ? 0 : -1;
 }
 
-void dump_servicepkt(servicepkt_t *pkt) {
+void print_servicepkt(servicepkt_t *pkt) {
 	printf("servicepkt:");
 	printf("\ttype: %d\n", pkt->type);
 	printf("\tseqn: %d\n", pkt->seqn);

@@ -2,6 +2,7 @@
 #include "gbn/gbn_utils.h"
 #include <string.h>
 #include <stdlib.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <errno.h>
 
@@ -21,6 +22,8 @@ int snd_buf_len = 0;
 //	Pointers to the head and tail nodes
 struct bufnode_t* snd_buffer_tail = NULL;
 struct bufnode_t* snd_buffer_head = NULL;
+
+pthread_mutex_t snd_buf_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /*
  *	Allocate the buffer (as a circular linked list)
@@ -105,6 +108,8 @@ int snd_buffer_push(datapkt_t *new_pkt) {
 
 	errno = 0;		//	Zero out errno
 
+	pthread_mutex_lock(&snd_buf_mutex);
+
 	//	Buffer not init-ed check
 	if(snd_buf_capacity > 0) {
 		//	Buffer full check
@@ -131,6 +136,8 @@ int snd_buffer_push(datapkt_t *new_pkt) {
 		return_value = -1;
 	}
 
+	pthread_mutex_unlock(&snd_buf_mutex);
+
 	return return_value;
 }
 
@@ -145,6 +152,8 @@ char* snd_buf_p(char* result) {
 
 	int i;
 	struct bufnode_t* cursor;
+
+	pthread_mutex_lock(&snd_buf_mutex);
 
 	/*
 	 *	Allocate space for a partial presentation, a string containing 8 characters
@@ -177,6 +186,8 @@ char* snd_buf_p(char* result) {
 
 	free(partial_result);
 
+	pthread_mutex_unlock(&snd_buf_mutex);
+
 	return result;
 }
 
@@ -191,6 +202,8 @@ int snd_buf_get(datapkt_t *pkt, int offset) {
 
 	struct bufnode_t* cursor = snd_buffer_head;
 
+	pthread_mutex_lock(&snd_buf_mutex);
+
 	if(offset >= 0 && offset < snd_buf_len) {
 
 		//	Moving cursor to requested node (the "offset-th" next node from head)
@@ -202,6 +215,8 @@ int snd_buf_get(datapkt_t *pkt, int offset) {
 		return_value = 0;
 	} else
 		return_value = -1;
+
+	pthread_mutex_unlock(&snd_buf_mutex);
 
 	return return_value;
 }
@@ -220,6 +235,8 @@ int snd_buf_get(datapkt_t *pkt, int offset) {
 struct timespec snd_buf_ack(int ack_seqn) {
 	int i;
 	struct timespec return_value, now;
+
+	pthread_mutex_lock(&snd_buf_mutex);
 
 	timespec_get(&now, TIME_UTC);
 
@@ -248,6 +265,8 @@ struct timespec snd_buf_ack(int ack_seqn) {
 	snd_buffer_head = snd_buffer_head->next;
 	snd_buffer_tail = snd_buffer_tail->next;
 
+	pthread_mutex_unlock(&snd_buf_mutex);
+
 	return return_value;
 }
 
@@ -261,6 +280,8 @@ struct timespec snd_buf_ack(int ack_seqn) {
  */
 int snd_buf_mark_snt(int seqn_to_mark) {
 	int i, return_value = -1;
+
+	pthread_mutex_lock(&snd_buf_mutex);
 
 	//	Starting with a cursor pointing to the head node
 	struct bufnode_t *cursor = snd_buffer_head;
@@ -278,6 +299,8 @@ int snd_buf_mark_snt(int seqn_to_mark) {
 			return_value = 0;
 			break;
 		}
+
+	pthread_mutex_unlock(&snd_buf_mutex);
 
 	return return_value;
 }

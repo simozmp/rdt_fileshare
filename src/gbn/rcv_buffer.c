@@ -5,6 +5,7 @@
 #include <string.h>
 #include <pthread.h>
 #include <errno.h>
+#include <sys/time.h>
 
 unsigned char* rcv_buffer = NULL;
 int buffer_size = -1;
@@ -31,30 +32,29 @@ int rcv_buffer_init(int dimension) {
 
 	errno = 0;			// Zero out errrno
 
-	if(dimension > 0) {
+	if(init == 0) {
+		if(dimension > 0) {
 
-		//	Atomic rcv_buffer manipulation start--------------------------------
-		pthread_mutex_lock(&rcv_buffer_mutex);
+			//	Atomic rcv_buffer manipulation start--------------------------------
+			pthread_mutex_lock(&rcv_buffer_mutex);
 
-		// Destroy the existing stream if already initialized
-		if(init)
-			rcv_buffer_destroy();
+			// Allocate memory
+			rcv_buffer = malloc(dimension*sizeof(unsigned char));
 
-		// Allocate memory
-		rcv_buffer = malloc(dimension*sizeof(unsigned char));
-		
-		// Check malloc errors
-		if(rcv_buffer != NULL) {
-			buffer_size = 0;
-			return_value = max_size = dimension;
-			init = 1;
-		} // else, errno will already be set, so nothing to do here
+			// Check malloc errors
+			if(rcv_buffer != NULL) {
+				buffer_size = 0;
+				return_value = max_size = dimension;
+				init = 1;
+			} // else, errno will already be set, so nothing to do here
 
-		pthread_mutex_unlock(&rcv_buffer_mutex);
-		//	Atomic rcv_buffer manipulation end----------------------------------
+			pthread_mutex_unlock(&rcv_buffer_mutex);
+			//	Atomic rcv_buffer manipulation end----------------------------------
 
+		} else
+			errno = ERANGE;
 	} else
-		errno = ERANGE;
+		errno = EEXIST;
 
 	return return_value;
 }
@@ -71,6 +71,12 @@ ssize_t rcv_buffer_fetch(const void* buffer, size_t len) {
 	ssize_t return_value = -1;
 	size_t tocpy = 0;
 
+	struct timespec max_wait;
+
+	timespec_get(&max_wait, TIME_UTC);
+
+	max_wait.tv_sec += 6;
+
 	errno = 0;		//	Zero out errno
 
 	//	Error handling
@@ -82,40 +88,49 @@ ssize_t rcv_buffer_fetch(const void* buffer, size_t len) {
 
 	else {
 
-		//	Atomic rcv_buffer manipulation start--------------------------------
-		pthread_mutex_lock(&rcv_buffer_mutex);
-
-		// Waiting for stream to be ready
-		while(!(buffer_size > 0))
-			if(pthread_cond_wait(&rcv_buffer_change, &rcv_buffer_mutex) != 0)
-				return -1;	//	errno will be set by the syscall
-
-		//	Evaluate the actual lenght of the content to be copied
-		tocpy = buffer_size > len ? len : buffer_size;
-
-		//	Copying stream content to buf
-		memcpy((void*) buffer, (void*) rcv_buffer, tocpy);
-
-		//	Removing copied data from the buffer
-		if(buffer_size > tocpy) {
-
-			//	Flushing read data by moving left remaining stream content
-			memmove((void*) rcv_buffer, (void*) rcv_buffer+tocpy,
-					buffer_size-tocpy);
-			buffer_size -= tocpy;
-
+		if(init == 0) {
+			return_value = 0;
 		} else {
-			
-			//	Clearing the entire buffer
-			memset(rcv_buffer, 0, max_size);
-			buffer_size = 0;
-		
+
+			//	Atomic rcv_buffer manipulation start--------------------------------
+			pthread_mutex_lock(&rcv_buffer_mutex);
+
+			// Waiting for stream to be ready
+			while(!(buffer_size > 0) && init == 1)
+				if(pthread_cond_wait(&rcv_buffer_change, &rcv_buffer_mutex/*, &max_wait*/) < 0)
+					return -1;	//	errno will be set by the syscall
+
+			if(init == 0) {
+				return_value = 0;
+			} else {
+				//	Evaluate the actual lenght of the content to be copied
+				tocpy = buffer_size > len ? len : buffer_size;
+
+				//	Copying stream content to buf
+				memcpy((void*) buffer, (void*) rcv_buffer, tocpy);
+
+				//	Removing copied data from the buffer
+				if(buffer_size > tocpy) {
+
+					//	Flushing read data by moving left remaining stream content
+					memmove((void*) rcv_buffer, (void*) rcv_buffer+tocpy,
+							buffer_size-tocpy);
+					buffer_size -= tocpy;
+
+				} else {
+
+					//	Clearing the entire buffer
+					memset(rcv_buffer, 0, max_size);
+					buffer_size = 0;
+
+				}
+
+				return_value = tocpy;
+			}
 		}
 
 		pthread_mutex_unlock(&rcv_buffer_mutex);
 		//	Atomic rcv_buffer manipulation end----------------------------------
-
-		return_value = tocpy;
 	}
 
 	return return_value;
@@ -140,7 +155,7 @@ ssize_t rcv_buffer_write(const void* newdata, size_t len) {
 	
 	else if(len + buffer_size > max_size)
 		errno = ENOBUFS;	//	"No buffer space available"
-	
+
 	else {
 
 		//	Atomic rcv_buffer manipulation start--------------------------------
@@ -151,11 +166,12 @@ ssize_t rcv_buffer_write(const void* newdata, size_t len) {
 
 		//	Update the size of the buffer
 		buffer_size += len;
-		
+
 		return_value = len;
 
 		// Signal the rcv_buffer change
-		pthread_cond_broadcast(&rcv_buffer_change);
+		if((return_value = pthread_cond_broadcast(&rcv_buffer_change)) != 0)
+			printf("\nrcv_buffer_write(): pthread_cond_broadcast failed (%s)\n", strerror(return_value));
 
 
 		pthread_mutex_unlock(&rcv_buffer_mutex);
@@ -201,6 +217,8 @@ int rcv_buffer_destroy() {
 		buffer_size = -1;
 		max_size = -1;
 		return_value = 0;
+
+		pthread_cond_broadcast(&rcv_buffer_change);
 
 		pthread_mutex_unlock(&rcv_buffer_mutex);
 		//	Atomic rcv_buffer manipulation end----------------------------------

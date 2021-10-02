@@ -171,7 +171,7 @@ int mergelogs(struct dirent *log_c_ent, struct dirent *log_s_ent) {
 		if(parse_line(ln_s, tm_s, &ms_s) < 0)
 			printf("Could not parse line:\nln_c:%s\n", ln_s);
 		
-		do {
+		while(server_over != 1 && client_over != 1) {
 			while(which_comes_first(tm_c, ms_c, tm_s, ms_s) == 1 && client_over != 1) {
 				fprintf(mergefile, "%s", ln_c);
 
@@ -194,7 +194,7 @@ int mergelogs(struct dirent *log_c_ent, struct dirent *log_s_ent) {
 
 			fprintf(mergefile, "\n\n\n");
 
-		} while(server_over != 1 && client_over != 1);
+		}
 
 		printf("closing files.\n");
 

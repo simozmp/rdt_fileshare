@@ -26,17 +26,18 @@ enum pkt_type {
 	ACK,
 	SYN,
 	SYNACK,
-	FIN
+	FIN,
+	FINACK
 };
 
 /*								PROTOTYPES									*/
 
-void make_datapkt(int seq, void *message, size_t message_len,
+int make_datapkt(int seq, void *message, size_t message_len,
 		datapkt_t* packet);
-void make_servicepkt(int seq, const int type, servicepkt_t* packet);
+int make_servicepkt(int seq, const int type, servicepkt_t* packet);
 int verify_datapkt(datapkt_t *pkt);
 int verify_servicepkt(servicepkt_t *pkt);
-void dump_servicepkt(servicepkt_t *pkt);
+void print_servicepkt(servicepkt_t *pkt);
 
 #endif
 

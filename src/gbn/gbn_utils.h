@@ -23,7 +23,7 @@ int log_open(char* filename);
 int log_dump();
 int log_write(char* message);
 int log_println();
-int timetostr(char* buffer);
+int current_time_str(char* buffer);
 struct timespec ts_abs_diff(struct timespec t1, struct timespec t2);
 struct timespec ts_diff(struct timespec t1, struct timespec t2);
 struct timespec ts_sum(struct timespec t1, struct timespec t2);

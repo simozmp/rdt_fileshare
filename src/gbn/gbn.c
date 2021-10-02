@@ -38,6 +38,7 @@ int gbn_socket() {
 
 	if(setsockopt(return_value, SOL_SOCKET, SO_RCVBUF,
 			&receiver_buffer_size, sizeof(receiver_buffer_size)) < 0) {
+		perror("gbn_socket");
 		return_value = -1;
 	}
 
@@ -60,6 +61,17 @@ int gbn_accept(int socketfd, struct sockaddr *addr, socklen_t addrlen) {
 	return gbnc_accept(socketfd, addr, addrlen);
 }
 
+
+int gbn_shutdown(int socketfd) {
+
+	return gbnc_shutdown(socketfd);
+}
+
+
+int gbn_close(int socketfd) {
+
+	return gbnc_close(socketfd);
+}
 
 /*
  *	This function splits the message into pieces, and then sends them by calling
@@ -98,6 +110,8 @@ ssize_t gbn_write(int socket, void *buf, size_t len) {
 
 			data_sent += data_len;
 		}
+
+		//gbn_send(NULL, 0);
 	}
 
 	wait_delivery();

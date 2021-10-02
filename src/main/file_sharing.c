@@ -16,7 +16,7 @@
 
 int receive_file(int socket_fd, const char* file_name, const char* destination_dir_path) {
 
-	int return_value, n, rcvd;
+	int return_value, n, rcvd = 0;
 	size_t filesize;
 
 	char* message;
@@ -69,6 +69,7 @@ int receive_file(int socket_fd, const char* file_name, const char* destination_d
 
 							rcvd += n;
 							sizetostr(rcvd, rcvdstr);
+							printf("\r                                    ");
 							printf("\rRcvd: %s/%s\t\t%.1f%%", rcvdstr, filesizestr, ((double) rcvd / (double) filesize)*100);
 							rcvdstr[0] = '\0';
 							fflush(stdout);
@@ -140,7 +141,6 @@ int send_file(int socket_fd, const char* file_name, const char* source_dir_path)
 							perror("fread()");
 							break;
 						} else if(n == 0) {
-							printf("\nFile over. All sent\n");
 							break;
 						} else {
 							n = gbn_write(socket_fd, buffer, n);
@@ -150,6 +150,7 @@ int send_file(int socket_fd, const char* file_name, const char* source_dir_path)
 							else {
 								sent += n;
 								sizetostr(sent, sentstr);
+								printf("\r                                    ");
 								printf("\rSent: %s/%s\t\t%.1f%%", sentstr, filesizestr, ((double) sent / (double) fstat.st_size)*100);
 								fflush(stdout);
 							}
@@ -158,6 +159,8 @@ int send_file(int socket_fd, const char* file_name, const char* source_dir_path)
 					sprintf(msg, "DONESND");
 					if(gbn_write(socket_fd, msg, strlen(msg)+1) < 0)
 						perror("gbn_write");
+
+					printf("\n");
 
 					return_value = 0;
 				}
@@ -183,11 +186,11 @@ int send_file(int socket_fd, const char* file_name, const char* source_dir_path)
 void sizetostr(off_t size, char* str) {
 	//double u = 10;
 	if(size < pow(10,3))
-		sprintf(str, "%dB", (int)size);
+		sprintf(str, "%d B", (int)size);
 	else if(size < pow(10,6))
-		sprintf(str, "%.1fKB", ((double)size)/pow(10,3));
+		sprintf(str, "%.1f KB", ((double)size)/pow(10,3));
 	else if(size < pow(10,9))
-		sprintf(str, "%.1fMB", ((double)size)/pow(10,6));
+		sprintf(str, "%.1f MB", ((double)size)/pow(10,6));
 	else
-		sprintf(str, "%.1fGB", ((double)size)/pow(10,9));
+		sprintf(str, "%.1f GB", ((double)size)/pow(10,9));
 }

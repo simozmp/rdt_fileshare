@@ -14,8 +14,8 @@
 #include "main/config.h"
 #include "main/file_sharing.h"
 
-
-const char pool_path[80] = "serverpool/";
+const char default_pool_path[80] = "./";
+char* pool_path;
 
 //	Heap memory by functions
 //		list_files_in_pool()
@@ -24,47 +24,71 @@ char*	lfp_buffer;			// Output lfp_buffer
 char*	lfp_filepath;		// String for file path
 char*	lfp_sizestr;		// String for the formatted file size
 
-
 void	serve(int connection_socket, struct sockaddr_in addr);
 char*	list_files_in_pool();
 void	sizetostr(off_t size, char* str);
 
 int main(int argc, char **argv) {
 
-	int socket_fd, reuse = 1;// connsd, len;// reuse = 1;
+	int socket_fd, reuse = 1;
 	struct sockaddr_in servaddr, cliaddr;
-	//char buff[MAXLINE];
 
-	// Retrieving a new socket
-	if((socket_fd = gbn_socket()) < 0) {
-		perror("socket error");
-		exit(-1);
+	pool_path = malloc(80*sizeof(char));
+
+	//	Changing pool directory if argument has been passed
+	if(argc > 1) {
+		sprintf(pool_path, "%s", argv[1]);
+		if(pool_path[strlen(pool_path)-1] != '/') {
+			printf("The specified directory doesn't exists. (did you forget / at the end?)\n");
+			return -1;
+		}
+
+		//	Verifying directory validity
+		DIR* dir = opendir(pool_path);
+		if(!dir) {
+			if(errno == ENOENT) {
+				printf("The specified directory doesn't exists.\n");
+				return -1;
+			} else {
+				perror("opendir()");
+				printf("Couldn't verify pool directory.\n");
+				return -1;
+			}
+		} else
+			printf("Working directory: \"%s\"\n\n", pool_path);
+	} else {
+		sprintf(pool_path, default_pool_path);
 	}
-
-	// Configuring servaddr and resetting cliaddr
-	memset((void *)&servaddr, 0, sizeof(servaddr));
-	servaddr.sin_family = AF_INET;
-	servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
-	servaddr.sin_port = htons(SERV_PORT);
-	memset((void *)&cliaddr, 0, sizeof(cliaddr));
-
-	// Allowing address reusage on socket
-	if(setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(int)) < 0) {
-		perror("errore setsockopt");
-		exit(-1);
-	}
-
-	// Address binding
-	if(bind(socket_fd, (struct sockaddr *) &servaddr, sizeof(servaddr)) < 0) {
-		perror("bind error");
-		exit(-1);
-	}
-
 
 	while(1) {
+		//	Retrieving a new socket
+		if((socket_fd = gbn_socket()) < 0) {
+			perror("socket error");
+			exit(-1);
+		}
+
+		//	Configuring servaddr and resetting cliaddr
+		memset((void *)&servaddr, 0, sizeof(servaddr));
+		servaddr.sin_family = AF_INET;
+		servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
+		servaddr.sin_port = htons(SERV_PORT);
+		memset((void *)&cliaddr, 0, sizeof(cliaddr));
+
+		// Allowing address reusage on socket
+		if(setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(int)) < 0) {
+			perror("errore setsockopt");
+			exit(-1);
+		}
+
+		//	Address binding
+		if(bind(socket_fd, (struct sockaddr *) &servaddr, sizeof(servaddr)) < 0) {
+			perror("bind error");
+			exit(-1);
+		}
 
 		printf("Waiting for connections..\n");
 
+		//	Accepting connection
 		if(gbn_accept(socket_fd, (struct sockaddr *) &cliaddr, sizeof(cliaddr)) < 0) {
 			perror("accept error");
 			exit(-1);
@@ -73,21 +97,22 @@ int main(int argc, char **argv) {
 				ntohs(cliaddr.sin_port));
 		}
 
-		// Fork
-		if(fork() == 0) {
-			exit(0);/*
-			if(close(connsd) == -1) {
-				perror("error closing connection socket on main process");
-			} else {
-				printf("handling connection\n");
-			}*/
-		} else {
-			//close(socket_fd);
+		//	Fork
+		if(fork() == 0) {	//	Son
+			printf("Server forked successfully.\n");
+			if(gbn_close(socket_fd) < 0) {
+				perror("gbn_close()");
+			} else
+				printf("\n");
+		} else {			//	Father
 			serve(socket_fd, cliaddr);
-			//close(connsd);
-			exit(0);
+			break;
 		}
 	}
+
+	free(pool_path);
+
+	exit(0);
 }
 
 void serve(int connection_socket, struct sockaddr_in addr) {
@@ -101,7 +126,6 @@ void serve(int connection_socket, struct sockaddr_in addr) {
 	char*	filename;
 
 	readymsg = malloc(4*sizeof(char));
-	sprintf(readymsg, "RDY");
 	line = malloc(MAXLINE*sizeof(char));
 	partial_line = malloc(MAXLINE*sizeof(char));
 	filename = malloc(100*sizeof(char));
@@ -109,12 +133,13 @@ void serve(int connection_socket, struct sockaddr_in addr) {
 	argument = malloc(MAXARGUMENT*sizeof(char));
 	tok = malloc(MAXARGUMENT*sizeof(char));
 
-
 	// lfp_  memory allocation
 	lfp_filepath = malloc(sizeof(char)*MAXLINE);	//	TODO: FREE MEMORY
 	lfp_sizestr = malloc(sizeof(char)*MAXLINE);
 	lfp_buffer = malloc(sizeof(char)*MAXLINE);
 	lfp_linebuffer = malloc(sizeof(char)*160);
+
+	sprintf(readymsg, "RDY");
 
 	while(1) {
 		
@@ -127,10 +152,10 @@ void serve(int connection_socket, struct sockaddr_in addr) {
 		n = gbn_read(connection_socket, line, MAXLINE);
 		switch(n) {
 		case 0:
-			printf("%s:%d disconnesso\n", inet_ntoa(addr.sin_addr),
+			printf("%s:%d disconnected\n\n", inet_ntoa(addr.sin_addr),
 				ntohs(addr.sin_port));
-			close(connection_socket);
-			exit(0);
+			gbn_close(connection_socket);
+			return;
 		case -1:
 			perror("error in read");
 			break;
@@ -202,6 +227,9 @@ void serve(int connection_socket, struct sockaddr_in addr) {
 						perror("write error");
 					else
 						printf("sent: '%s'\n", line);
+
+					printf("\nSending file:\n");
+
 					send_file(connection_socket, argument, pool_path);
 				}
 			}
@@ -221,6 +249,8 @@ void serve(int connection_socket, struct sockaddr_in addr) {
 					perror("write error");
 				else
 					printf("sent: '%s'\n", line);
+
+				printf("\nReceiving file:\n");
 
 				receive_file(connection_socket, argument, pool_path);
 			}
@@ -251,14 +281,14 @@ char* list_files_in_pool() {
 	d = opendir(pool_path);
 
 	if(d) {
-		sprintf(lfp_linebuffer, "%50s\t%7s\n\n", "Name", "Size");
+		sprintf(lfp_linebuffer, "%50s\t%9s\n\n", "Name", "Size");
 
 		// Append line to lfp_buffer
 		strcat(lfp_buffer, lfp_linebuffer);
 
 		// Scans each file in pool...
 		while((dir = readdir(d)) != NULL)
-			// ...which is visible
+			// ...which is visible (or not a directory)
 			if(dir->d_name[0] != '.') {
 
 				// Setting up complete lfp_filepath
@@ -274,7 +304,7 @@ char* list_files_in_pool() {
 				sizetostr(finfo.st_size, lfp_sizestr);
 				
 				// Print in linebuffer the table line
-				sprintf(lfp_linebuffer, "%50s\t%7s\n", dir->d_name, lfp_sizestr);
+				sprintf(lfp_linebuffer, "%50s\t%9s\n", dir->d_name, lfp_sizestr);
 
 				// Append line to lfp_buffer
 				strcat(lfp_buffer, lfp_linebuffer);

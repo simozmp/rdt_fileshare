@@ -13,9 +13,13 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <errno.h>
+#include <pthread.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <arpa/inet.h>
 #include <time.h>
+
+pthread_mutex_t log_write_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 //	Log file descriptor
 FILE* logfd;
@@ -24,6 +28,11 @@ int log_open(char* filename) {
 
 	char* relative_path = "log/";
 	char* full_path = malloc(90*sizeof(char));
+
+	struct stat dir_stat;
+
+	if(stat(relative_path, &dir_stat) == -1)
+		mkdir(relative_path, 0777);
 
 	sprintf(full_path, "%s%s.log", relative_path, filename);
 	logfd = fopen(full_path, "w");
@@ -41,24 +50,28 @@ int log_dump() {
 
 int log_write(char* message) {
 
-	int return_value = 1;
+	//pthread_mutex_lock(&log_write_mutex);
+
+	int return_value = 0;
 	char* timestring = malloc(30*sizeof(char));
 
 	if(logfd == NULL)
 		return_value = -1;
 	else {
-		timetostr(timestring);
+		current_time_str(timestring);
 		fprintf(logfd, "[%s]\t%s\n", timestring, message);
 		fflush(logfd);
 	}
 
 	free(timestring);
 
+	//pthread_mutex_unlock(&log_write_mutex);
+
     return return_value;
 }
 
 int log_println() {
-	int return_value = 1;
+	int return_value = 0;
 
 	if(logfd == NULL)
 		return_value = -1;
@@ -68,15 +81,16 @@ int log_println() {
 	return return_value;
 }
 
-int timetostr(char* buffer) {
+int current_time_str(char* buffer) {
 
-	struct tm *long_time;
+	struct tm *long_time = malloc(sizeof(struct tm));
 
 	struct timespec short_time;
 	timespec_get(&short_time, TIME_UTC);
 
 	const time_t rawtime = time(NULL);
-	long_time = localtime(&rawtime);
+
+	localtime_r(&rawtime, long_time);
 
 	sprintf(buffer, "%d-%d-%d_%d:%d:%d.%ld", long_time->tm_year + 1900,
 												long_time->tm_mon,
@@ -85,6 +99,8 @@ int timetostr(char* buffer) {
 												long_time->tm_min,
 												long_time->tm_sec,
 												short_time.tv_nsec/10000);
+
+	free(long_time);
 
 	return 0;
 }
@@ -108,11 +124,11 @@ struct timespec ts_abs_diff(struct timespec t1, struct timespec t2) {
 	struct timespec result;
 	int max = ts_max(t1,t2);
 
-	if(max == 1) {
+	if(max == 1)
 		result = ts_diff(t1, t2);
-	} else if(max == 2) {
+	else if(max == 2)
 		result = ts_diff(t2, t1);
-	} else {
+	else {
 		result.tv_nsec = 0;
 		result.tv_sec = 0;
 	}
