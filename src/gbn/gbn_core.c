@@ -843,6 +843,9 @@ int passive_close(int seqn) {
 			break;
 
 		case sending:
+
+			lock_mutex(__func__);
+
 			log_write("FIN received, FINACKing. Will send FIN at the end of gbn_write().");
 			make_servicepkt(seqn, FINACK, &response_fin);
 			send_ack(connsocket, &response_fin);
@@ -851,6 +854,9 @@ int passive_close(int seqn) {
 
 			log_write("status: closewait");
 			status = closewait;
+
+			unlock_mutex(__func__);
+
 			break;
 
 		case closewait:
