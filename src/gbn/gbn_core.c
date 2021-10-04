@@ -811,14 +811,14 @@ void incoming_pkt_handler() {
  */
 int passive_close(int seqn) {
 
-	lock_mutex(__func__);
-
 	log_write("passive_close()");
 
 	switch(status) {
 
 		//	Passive close steps
 		case established:
+
+			lock_mutex(__func__);
 
 			if(response_fin.type == 0) {
 				log_write("New FIN received. FINACKing and FINning.");
@@ -838,6 +838,8 @@ int passive_close(int seqn) {
 
 			start_timer(__func__);
 
+			unlock_mutex(__func__);
+
 			break;
 
 		case sending:
@@ -852,12 +854,18 @@ int passive_close(int seqn) {
 			break;
 
 		case closewait:
+
+			lock_mutex(__func__);
+
 			log_write("Finished send! FINning and waiting for last ack.");
 			send_ack(connsocket, &response_fin);
 			next_seqn++;
 			log_write("status: lastack");
 			start_timer(__func__);
 			status = lastack;
+
+			unlock_mutex(__func__);
+
 			break;
 
 		case lastack:
@@ -868,24 +876,34 @@ int passive_close(int seqn) {
 
 		//	Active close steps
 		case finwait1:
+
+			lock_mutex(__func__);
+
 			stop_timer(__func__);
 			status = finwait2;
 			log_write("status: finwait2");
+
+			unlock_mutex(__func__);
+
 			break;
 
 		case finwait2:
+
+			lock_mutex(__func__);
+
 			stop_timer(__func__);
 			make_servicepkt(seqn, FINACK, &response_fin);
 			send_ack(connsocket, &response_fin);
 			log_write("status: timedwait");
 			status = timedwait;
 			start_timer(__func__);
+
+			unlock_mutex(__func__);
+
 			break;
 		default:
 			break;
 	}
-
-	unlock_mutex(__func__);
 
 	return status;
 }
