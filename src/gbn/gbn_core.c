@@ -170,7 +170,7 @@ int gbnc_connect(int socketfd, const struct sockaddr *servaddr,
 	} else
 		start_timer(__func__);
 
-	log_write("Response SYN sent, waiting for SYNACK.");
+	log_write("Response SYN sent, waiting for SYNACK.");	//	TODO: Implement a timeout/exponential backoff
 
 	status = synsent;
 

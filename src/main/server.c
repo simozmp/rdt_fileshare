@@ -17,15 +17,15 @@
 const char default_pool_path[80] = "./";
 char* pool_path;
 
-//	Heap memory by functions
+//	Heap memory pointer by functions
 //		list_files_in_pool()
-char*	lfp_linebuffer;		// Single line lfp_buffer
-char*	lfp_buffer;			// Output lfp_buffer
+char*	lfp_linebuffer;	// Presentation string for files in pool
+char*	pool_presentation;			// Output lfp_buffer
 char*	lfp_filepath;		// String for file path
 char*	lfp_sizestr;		// String for the formatted file size
 
 void	serve(int connection_socket, struct sockaddr_in addr);
-char*	list_files_in_pool();
+void	read_pool();
 void	sizetostr(off_t size, char* str);
 
 int main(int argc, char **argv) {
@@ -101,7 +101,7 @@ int main(int argc, char **argv) {
 		if(fork() == 0) {	//	Son
 			printf("Server forked successfully.\n");
 			if(gbn_close(socket_fd) < 0) {
-				perror("gbn_close()");
+				perror("gbn_close(connection_socket)");
 			} else
 				printf("\n");
 		} else {			//	Father
@@ -133,22 +133,34 @@ void serve(int connection_socket, struct sockaddr_in addr) {
 	argument = malloc(MAXARGUMENT*sizeof(char));
 	tok = malloc(MAXARGUMENT*sizeof(char));
 
-	// lfp_  memory allocation
+	//	pool strings memory allocation
 	lfp_filepath = malloc(sizeof(char)*MAXLINE);	//	TODO: FREE MEMORY
 	lfp_sizestr = malloc(sizeof(char)*MAXLINE);
-	lfp_buffer = malloc(sizeof(char)*MAXLINE);
+	pool_presentation = malloc(sizeof(char)*MAXLINE);
 	lfp_linebuffer = malloc(sizeof(char)*160);
 
 	sprintf(readymsg, "RDY");
 
 	while(1) {
-		
-		while((n = gbn_write(connection_socket, readymsg, strlen(readymsg))) != strlen(readymsg)) {
-			perror("error writing ready message.\n");
-		}
+
+		//	Sending RDY message
+		n = gbn_write(connection_socket, readymsg, strlen(readymsg));
+		if(n == strlen(readymsg))
+			printf("\nReady message sent to client.\n");
+		else if(n == 0) {
+			printf("%s:%d disconnected\n\n", inet_ntoa(addr.sin_addr),
+				ntohs(addr.sin_port));
+			gbn_close(connection_socket);
+			return;
+		} else
+			perror("write error");
 
 		printf("\nWaiting for request..\n");
-		memset(line, 0, MAXLINE*sizeof(char));
+
+		//	Resetting line string
+		line[0] = '\0';
+
+		//	Reading command message from client
 		n = gbn_read(connection_socket, line, MAXLINE);
 		switch(n) {
 		case 0:
@@ -164,21 +176,36 @@ void serve(int connection_socket, struct sockaddr_in addr) {
 			break;
 		}
 		
-		// Split string in command (1 word) and arguments (>= 0 words)
+		//	Split string in command (1 word) and arguments (>= 0 words)
 		command = strtok(line, " \n\t");
 		tok = strtok(NULL, "\n");
 		if(tok != NULL)
 			argument = strcpy(argument, tok);
 
 		if(strcmp(command, "list") == 0) {
-			strcpy(line, list_files_in_pool());
 
-			// Write response
-			if(gbn_write(connection_socket, line, strlen(line)) != strlen(line)) {
+			//	Updating lfp_linebuffer
+			read_pool();
+
+			//	Sending response
+			n = gbn_write(connection_socket, pool_presentation,
+					strlen(pool_presentation));
+
+			if(n == strlen(pool_presentation))
+				printf("sent:\n'%s'\n", pool_presentation);
+			else if(n == 0) {
+				printf("%s:%d disconnected\n\n", inet_ntoa(addr.sin_addr),
+					ntohs(addr.sin_port));
+				gbn_close(connection_socket);
+				return;
+			} else if(n < 0) {
 				perror("write error");
+			} else {
+				printf("There was an error. Shutting down connection");
+				gbn_shutdown(connection_socket);
+				gbn_close(connection_socket);
+				return;
 			}
-			else
-				printf("sent: '%s'\n", line);
 
 		} else if(strcmp(command, "help") == 0) {
 			sprintf(line, "usage: command [argument]\n\n");
@@ -192,41 +219,97 @@ void serve(int connection_socket, struct sockaddr_in addr) {
 			sprintf(partial_line, "put\tupload file specified by argument");
 			strcat(line, partial_line);
 
-			// Write response
-			if(gbn_write(connection_socket, line, strlen(line)) != strlen(line))
+			//	Sending response
+			n = gbn_write(connection_socket, line, strlen(line));
+
+			if(n == strlen(line))
+				printf("sent:\n'%s'\n", line);
+			else if(n == 0) {
+				printf("%s:%d disconnected\n\n", inet_ntoa(addr.sin_addr),
+					ntohs(addr.sin_port));
+				gbn_close(connection_socket);
+				return;
+			} else if(n < 0) {
 				perror("write error");
-			else
-				printf("sent: '%s'\n", line);
+			} else {
+				printf("There was an error. Shutting down connection");
+				gbn_shutdown(connection_socket);
+				gbn_close(connection_socket);
+				return;
+			}
 
 		} else if(strcmp(command, "get") == 0) {
 
 			if(strlen(argument) == 0) {
 				sprintf(line, "Please specify a file to get.\n");
-				// Write response
-				if(gbn_write(connection_socket, line, strlen(line)) != strlen(line))
-					perror("write error");
-				else
+
+				//	Write response
+				n = gbn_write(connection_socket, line, strlen(line));
+				if(n == strlen(line))
 					printf("sent: '%s'\n", line);
-			} else {
+				else if(n == 0) {
+					printf("%s:%d disconnected\n\n", inet_ntoa(addr.sin_addr),
+						ntohs(addr.sin_port));
+					gbn_close(connection_socket);
+					return;
+				} else if(n < 0) {
+					perror("write error");
+				} else {
+					printf("There was an error. Shutting down connection");
+					gbn_shutdown(connection_socket);
+					gbn_close(connection_socket);
+					return;
+				}
+
+			} else {	//	Sending file
+
+				//	Printing full file name on string
 				sprintf(filename, "%s%s", pool_path, argument);
 
 				//	Checking file
 				if(access(filename, R_OK) != 0) {
 
-					sprintf(line, "NOTAF");
-					// Write response
-					if(gbn_write(connection_socket, line, strlen(line)) != strlen(line))
+					//	Printing response to string
+					sprintf(line, "NOTAF");		//	(NOT A File)
+
+					//	Sending response
+					n = gbn_write(connection_socket, line, strlen(line));
+					if(n == strlen(line))
+						printf("Requested file doesn't exist.\n\"Not a file\" message sent.\n");
+					else if(n == 0) {
+						printf("%s:%d disconnected\n\n", inet_ntoa(addr.sin_addr),
+							ntohs(addr.sin_port));
+						gbn_close(connection_socket);
+						return;
+					} else if(n < 0) {
 						perror("write error");
-					else
-						printf("sent: '%s'\n", line);
+					} else {
+						printf("There was an error. Shutting down connection");
+						gbn_shutdown(connection_socket);
+						gbn_close(connection_socket);
+						return;
+					}
 
 				} else {
 					sprintf(line, "FINC %s", argument);
-					// Write response
-					if(gbn_write(connection_socket, line, strlen(line)) != strlen(line))
-						perror("write error");
-					else
+
+					//	Sending response
+					n = gbn_write(connection_socket, line, strlen(line));
+					if(n == strlen(line))
 						printf("sent: '%s'\n", line);
+					else if(n == 0) {
+						printf("%s:%d disconnected\n\n", inet_ntoa(addr.sin_addr),
+							ntohs(addr.sin_port));
+						gbn_close(connection_socket);
+						return;
+					} else if(n < 0) {
+						perror("write error");
+					} else {
+						printf("There was an error. Shutting down connection");
+						gbn_shutdown(connection_socket);
+						gbn_close(connection_socket);
+						return;
+					}
 
 					printf("\nSending file:\n");
 
@@ -236,19 +319,47 @@ void serve(int connection_socket, struct sockaddr_in addr) {
 
 		} else if(strcmp(command, "put") == 0) {
 			if(strlen(argument) == 0) {
+
 				printf(line, "I need a filename to receive the file.\n");
-				// Write response
-				if(gbn_write(connection_socket, line, strlen(line)) != strlen(line))
-					perror("write error");
-				else
+
+				//	Sending response
+				n = gbn_write(connection_socket, line, strlen(line));
+				if(n == strlen(line))
 					printf("sent: '%s'\n", line);
+				else if(n == 0) {
+					printf("%s:%d disconnected\n\n", inet_ntoa(addr.sin_addr),
+						ntohs(addr.sin_port));
+					gbn_close(connection_socket);
+					return;
+				} else if(n < 0) {
+					perror("write error");
+				} else {
+					printf("There was an error. Shutting down connection");
+					gbn_shutdown(connection_socket);
+					gbn_close(connection_socket);
+					return;
+				}
+
 			} else {
 				sprintf(line, "WFFILE %s", argument);
-				// Write response
-				if(gbn_write(connection_socket, line, strlen(line)) != strlen(line))
-					perror("write error");
-				else
+
+				//	Sending response
+				n = gbn_write(connection_socket, line, strlen(line));
+				if(n == strlen(line))
 					printf("sent: '%s'\n", line);
+				else if(n == 0) {
+					printf("%s:%d disconnected\n\n", inet_ntoa(addr.sin_addr),
+						ntohs(addr.sin_port));
+					gbn_close(connection_socket);
+					return;
+				} else if(n < 0) {
+					perror("write error");
+				} else {
+					printf("There was an error. Shutting down connection");
+					gbn_shutdown(connection_socket);
+					gbn_close(connection_socket);
+					return;
+				}
 
 				printf("\nReceiving file:\n");
 
@@ -257,11 +368,23 @@ void serve(int connection_socket, struct sockaddr_in addr) {
 		} else {
 			strcpy(line, "Invalid command, try typing help");
 
-			// Write response
-			if(gbn_write(connection_socket, line, strlen(line)) != strlen(line))
-				perror("write error");
-			else
+			//	Sending response
+			n = gbn_write(connection_socket, line, strlen(line));
+			if(n == strlen(line))
 				printf("sent: '%s'\n", line);
+			else if(n == 0) {
+				printf("%s:%d disconnected\n\n", inet_ntoa(addr.sin_addr),
+					ntohs(addr.sin_port));
+				gbn_close(connection_socket);
+				return;
+			} else if(n < 0) {
+				perror("write error");
+			} else {
+				printf("There was an error. Shutting down connection");
+				gbn_shutdown(connection_socket);
+				gbn_close(connection_socket);
+				return;
+			}
 		}
 	}
 }
@@ -270,58 +393,50 @@ void serve(int connection_socket, struct sockaddr_in addr) {
  *	This function returns a readable table formatted file list of the pool
  *
  */
-char* list_files_in_pool() {
-	DIR*	d;				// Directory variable for pool
-	struct	dirent* dir;	// Directory entry for files
-	struct	stat finfo;		// Stat variable for file information
+void read_pool() {
+	DIR*	pool_dir;			//	DIR variable for pool
+	struct	dirent* dir_entry;	//	Directory entry for files
+	struct	stat finfo;			//	Stat variable for file information
 
-	lfp_buffer[0] = 0;
+	//	Pool directory opening
+	pool_dir = opendir(pool_path);
 
-	// Pool folder opening
-	d = opendir(pool_path);
+	if(pool_dir) {
+		//	Writing columns headers line to pool_presentation
+		sprintf(pool_presentation, "%50s\t%9s\n\n", "Name", "Size");
 
-	if(d) {
-		sprintf(lfp_linebuffer, "%50s\t%9s\n\n", "Name", "Size");
+		//	Scans each dirent (files/directories) in pool dir...
+		while((dir_entry = readdir(pool_dir)) != NULL)
+			//	...which is visible and not a directory
+			if(dir_entry->d_name[0] != '.' &&
+					dir_entry->d_type != DT_DIR) {
 
-		// Append line to lfp_buffer
-		strcat(lfp_buffer, lfp_linebuffer);
-
-		// Scans each file in pool...
-		while((dir = readdir(d)) != NULL)
-			// ...which is visible (or not a directory)
-			if(dir->d_name[0] != '.') {
-
-				// Setting up complete lfp_filepath
+				//	Setting up complete lfp_filepath
 				strcpy(lfp_filepath, pool_path);
 				lfp_filepath[strlen(lfp_filepath)] = 0;
-				strcat(lfp_filepath, dir->d_name);
+				strcat(lfp_filepath, dir_entry->d_name);
 
-				// Get file info
+				//	Get file info
 				if(stat(lfp_filepath, &finfo) != 0)
 					perror("stat");
 
-				// Get formatted size
+				//	Get formatted size
 				sizetostr(finfo.st_size, lfp_sizestr);
 				
-				// Print in linebuffer the table line
-				sprintf(lfp_linebuffer, "%50s\t%9s\n", dir->d_name, lfp_sizestr);
+				//	Print formatted row with file info in linebuffer
+				sprintf(lfp_linebuffer, "%50s\t%9s\n", dir_entry->d_name, lfp_sizestr);
 
-				// Append line to lfp_buffer
-				strcat(lfp_buffer, lfp_linebuffer);
+				//	Append line to pool_presentation
+				strcat(pool_presentation, lfp_linebuffer);
 			}
 
-		// Pool folder closure
-		closedir(d);
+		//	Pool folder closure
+		closedir(pool_dir);
+
+		//	To delete the last '\n' from pool_presentation
+		pool_presentation[strlen(pool_presentation)-1] = 0;
+	} else {
+		sprintf(pool_presentation, "Server pool currently unavailable.");
 	}
-
-	// To delete the last '\n'
-	lfp_buffer[strlen(lfp_buffer)-1] = 0;
-
-	/*/ String memory deallocation
-	free(lfp_filepath);
-	free(lfp_sizestr);
-	free(lfp_linebuffer);*/
-
-	return lfp_buffer;
 }
 

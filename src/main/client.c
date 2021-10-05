@@ -100,7 +100,7 @@ int session() {
 
 	//	Connecting to server
 	if(connect_to_server() < 0) {
-		perror("Couldn't connect to server");
+		perror("Couldn't connect to server. gbn_connect()");
 		return -1;
 	} else {
 		printf("Connected to server.\n");
@@ -111,10 +111,17 @@ int session() {
 		//	Wait for RDY message from server
 		do {
 			n = gbn_read(socket_fd, response, MAXLINE);
+			if(n < 0) {
+				perror("gbn_read()");
+				return 0;
+			} else if(n == 0) {
+				printf("Server disconnected.\n");
+				return 0;
+			}
 			response[n] = 0;
 		} while(strcmp(response, "RDY") != 0);
 
-		//	Resetting the promptline string
+		//	Cleaning up promptline string
 		promptline[0] = '\n';
 		promptline[1] = '\0';
 
