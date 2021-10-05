@@ -1,10 +1,3 @@
-/*
- * gbn_utils.c
- *
- *  Created on: 4 set 2021
- *      Author: simozmp
- */
-
 #include "gbn/gbn_utils.h"
 
 #include <stdlib.h>
@@ -19,11 +12,12 @@
 #include <arpa/inet.h>
 #include <time.h>
 
-pthread_mutex_t log_write_mutex = PTHREAD_MUTEX_INITIALIZER;
-
 //	Log file descriptor
 FILE* logfd;
 
+/*
+ *	Opens the log file
+ */
 int log_open(char* filename) {
 
 	char* relative_path = "log/";
@@ -44,13 +38,17 @@ int log_open(char* filename) {
 	return logfd == NULL ? -1 : 1;
 }
 
+/*
+ *	Closes the log file
+ */
 int log_dump() {
 	return fclose(logfd);
 }
 
+/*
+ *	Writes message into log file (with timestamp)
+ */
 int log_write(char* message) {
-
-	//pthread_mutex_lock(&log_write_mutex);
 
 	int return_value = 0;
 	char* timestring = malloc(30*sizeof(char));
@@ -65,11 +63,12 @@ int log_write(char* message) {
 
 	free(timestring);
 
-	//pthread_mutex_unlock(&log_write_mutex);
-
     return return_value;
 }
 
+/*
+ *	prints a blank line in log
+ */
 int log_println() {
 	int return_value = 0;
 
@@ -81,6 +80,9 @@ int log_println() {
 	return return_value;
 }
 
+/*
+ *	Writes in buffer current time formatted string
+ */
 int current_time_str(char* buffer) {
 
 	struct tm *long_time = malloc(sizeof(struct tm));
@@ -105,8 +107,9 @@ int current_time_str(char* buffer) {
 	return 0;
 }
 
-
-
+/*
+ *	Returns the sum of t1 and t2
+ */
 struct timespec ts_sum(struct timespec t1, struct timespec t2) {
 	struct timespec result;
 
@@ -120,6 +123,9 @@ struct timespec ts_sum(struct timespec t1, struct timespec t2) {
 	return result;
 }
 
+/*
+ *	Returns the absolute difference of t1 and t2
+ */
 struct timespec ts_abs_diff(struct timespec t1, struct timespec t2) {
 	struct timespec result;
 	int max = ts_max(t1,t2);
@@ -136,6 +142,9 @@ struct timespec ts_abs_diff(struct timespec t1, struct timespec t2) {
 	return result;
 }
 
+/*
+ *	Returns the difference of t1 and t2
+ */
 struct timespec ts_diff(struct timespec t1, struct timespec t2) {
 	struct timespec result;
 
@@ -150,6 +159,9 @@ struct timespec ts_diff(struct timespec t1, struct timespec t2) {
 	return result;
 }
 
+/*
+ *	Returns factor times ts
+ */
 struct timespec ts_times(struct timespec ts, double factor) {
 	struct timespec result;
 
@@ -165,6 +177,13 @@ struct timespec ts_times(struct timespec ts, double factor) {
 	return result;
 }
 
+/*
+ * Compares t1 and t2 and returns:
+ * · 1 if t1 is greater than t2
+ * · 2 if t1 is smaller than t2
+ * · 0 if t1 is equal t2
+ *
+ */
 int ts_max(struct timespec t1, struct timespec t2) {
 
 	if(t1.tv_sec > t2.tv_sec)

@@ -1,7 +1,8 @@
 /*
- *	Implementation at level 5 of go back n protocol
+ *	Implementation of a Go Back N reliable socket
  *
  *	Author: simozmp
+ *
  */
 
 #ifndef GBN_H

@@ -16,13 +16,13 @@
 
 
 /*									ENUMS									*/
+
 enum statuses {
-	//shared statuses
-		//	Basic statuses
+	//	Shared statuses
 	closed = 0,
 	listening,
 	established,
-	sending,
+	sending,		//	Assumed during gbn_write()
 
 		//	Passive 4-way-handshake
 	closewait,
@@ -32,18 +32,20 @@ enum statuses {
 	finwait2,
 	timedwait,
 
-	// server statuses
+	// Server statuses
 	synrcvd,
 
-	// client statuses
+	// Client statuses
 	synsent
 };
 
 
 
 
+/*							GLOBAL VARIABLES								*/
+
 //	Global socket, saved on connection
-int connsocket = -1;	//	(should be valid when in established status)
+int connsocket = -1;	//	(should be valid when status != closed)
 
 //	This indicates whether the system is initialized (1) or not (0)
 int gbn_init = 0;
@@ -55,51 +57,39 @@ int status = closed;
 struct sockaddr remote_addr;
 socklen_t remote_addr_len;
 
-//	GBN variables for receiving
+//	Buffered service pkts for retransmissions
+servicepkt_t valid_ack;			//	Last valid ack (for out of order pkts)
+servicepkt_t valid_fin;			//	fin/finack
+servicepkt_t valid_syn;			//	syn/synack
 
-//		A buffer for the ack relative to a receive
-servicepkt_t response_ack;
-
-//		A buffer for retransmission during the closing connection phase (finack)
-servicepkt_t response_fin;
-
-//		A buffer for retransmission during the connection phase
-servicepkt_t init_buffer;
-
-//		Listening thread id
+//	Listening thread id
 pthread_t listening_thread_id = 0;
 
-//		GBN core variables for sending
+//	GBN core variables for sending
 int base = -1;
 int next_seqn = -1;
 int expectedseqn = -1;
 
-//	A buffer to store all the pkts in snd_buf during retransmission phase
+//	A buffer to store a copy all unacked pkts during retransmission phase
 datapkt_t* pkt_win;
 
-//	Timespec variables to estimate the rtt, and update the timer timeout
-struct timespec rtt_est;
-struct timespec rtt_dev;
-struct timespec timer_timeout;
-struct timespec timed_wait_timeout;
+//	Time variables
+struct timespec rtt_est;				//	Estimated round-trip time
+struct timespec rtt_dev;				//	Round-trip time std deviance
+struct timespec timer_timeout;			//	Timeout for retransmission timer
+struct timespec timed_wait_timeout;		//	Timeout for timed wait timer
+struct itimerval null_timer;			//	A (0s0ns) timeout to stop the timer
 
-//	A null timer for stopping the timer
-struct itimerval null_timer;
-
-
-//	Mutex to work in isolation on GBN core variables
+//	pthread_mutex to work in isolation on GBN core variables and pthread_conds
 pthread_mutex_t core_mutex;
 
-pthread_cond_t data_sent = PTHREAD_COND_INITIALIZER;
-pthread_cond_t connection_cond = PTHREAD_COND_INITIALIZER;
+//	pthread_cond to signal condition change
+pthread_cond_t conn_state_chng = PTHREAD_COND_INITIALIZER;	//	cond: (status changed)	(used during connection phase)
+pthread_cond_t base_chng = PTHREAD_COND_INITIALIZER;		//	cond: (base changed)
+pthread_cond_t conn_closed = PTHREAD_COND_INITIALIZER;		//	cond: (status == closed)
 
-//	Condition relative to a change of the base variable
-pthread_cond_t base_change = PTHREAD_COND_INITIALIZER;
 
-//	Condition relative to the connection closing
-pthread_cond_t conn_close = PTHREAD_COND_INITIALIZER;
-
-//	A string to temporarily store a message for the log file
+//	A string to temporarily store a message to write into the log file
 char* log_msg;
 
 
@@ -110,27 +100,19 @@ char* log_msg;
 int deliver_data(datapkt_t *pkt);
 void timeout_handler();
 void incoming_pkt_handler();
+int rtt_adj(struct timespec rtt_sample);
 void listen_routine(void* arg);		//	On separate thread
 void launch_listening_thread();
-
 void retransmission();				//	On separate thread
-
 int passive_close();
 int gbn_core_init();
 int gbn_core_fin();
-
 ssize_t send_pkt(int socketfd, datapkt_t *pkt);
 ssize_t send_ack(int socketfd, servicepkt_t *pkt);
-
 int start_timer(const char* func_name);
 int stop_timer(const char* func_name);
-
 void lock_mutex(const char* func_name);
 void unlock_mutex(const char* func_name);
-
-int rtt_adj(struct timespec rtt_sample);
-
-//	void integrity_check(const char* caller_fcn);	//	Variables integrity check function (developing purposes)
 
 
 
@@ -138,7 +120,8 @@ int rtt_adj(struct timespec rtt_sample);
 /*							IMPLEMENTATIONS									*/
 
 /*
- *	This implements the 3-way handshake client side
+ *	GBN implementation of the connect() function, connects socketfd socket
+ *	to a server at servaddr (sockaddr of lenght addrlen)
  *
  */
 int gbnc_connect(int socketfd, const struct sockaddr *servaddr,
@@ -175,11 +158,13 @@ int gbnc_connect(int socketfd, const struct sockaddr *servaddr,
 	sprintf(log_msg, "Connection attempt. Trying to reach server at %s", servaddr_p);
 	log_write(log_msg);
 
-	// Sending SYN
-	if(make_servicepkt(0, SYN, &init_buffer) < 0) {
+	//	Making SYN pkt
+	if(make_servicepkt(0, SYN, &valid_syn) < 0) {
 		printf("gbnc_connect(): make_servicepkt error.");
 	}
-	if(send_ack(socketfd, &init_buffer) < 0) {
+
+	//	Sending SYN pkt
+	if(send_ack(socketfd, &valid_syn) < 0) {
 		perror("send_ack()");
 		return -1;
 	} else
@@ -189,10 +174,10 @@ int gbnc_connect(int socketfd, const struct sockaddr *servaddr,
 
 	status = synsent;
 
-	//	Wait for synack
+	//	Waiting for synack
 	lock_mutex(__func__);
 	while(status == synsent)
-		pthread_cond_wait(&connection_cond, &core_mutex);
+		pthread_cond_wait(&conn_state_chng, &core_mutex);
 	unlock_mutex(__func__);
 
 	sprintf(log_msg, "Connection established. Remote address: %s", servaddr_p);
@@ -204,7 +189,7 @@ int gbnc_connect(int socketfd, const struct sockaddr *servaddr,
 	free(servaddr_p);
 	free(log_name);
 
-	return 1;
+	return 0;
 }
 
 /*
@@ -236,13 +221,13 @@ int gbnc_accept(int socketfd, struct sockaddr *addr, socklen_t addrlen) {
 
 		// Waiting for a SYN packet (connection request)
 		do {
-			memset(&init_buffer, 0, sizeof(init_buffer));
+			memset(&valid_syn, 0, sizeof(valid_syn));
 
-			if(recvfrom(socketfd, (unsigned char*) &init_buffer,
+			if(recvfrom(socketfd, (unsigned char*) &valid_syn,
 					sizeof(servicepkt_t), 0, addr, &addrlen) < 0) {
 				perror("recvfrom in gbn_accept");
 			}
-		} while(init_buffer.seqn != 0 && init_buffer.type != SYN);
+		} while(valid_syn.seqn != 0 && valid_syn.type != SYN);
 
 		log_write("Connection incoming, allocating resources.");
 
@@ -264,15 +249,15 @@ int gbnc_accept(int socketfd, struct sockaddr *addr, socklen_t addrlen) {
 			perror("rcv_buffer_init");
 
 		// Resetting buffer_pkt
-		memset(&init_buffer, 0, sizeof(init_buffer));
+		memset(&valid_syn, 0, sizeof(valid_syn));
 
 		log_write("Accepting.");
 
 		//	Sending SYNACK to accept
-		if(make_servicepkt(0, SYNACK, &init_buffer) < 0) {
+		if(make_servicepkt(0, SYNACK, &valid_syn) < 0) {
 			printf("gbnc_connect(): make_servicepkt error.");
 		}
-		if(send_ack(connsocket, &init_buffer) < 0)
+		if(send_ack(connsocket, &valid_syn) < 0)
 			perror("send_ack() in gbn_accept");
 		else
 			start_timer(__func__);
@@ -281,7 +266,7 @@ int gbnc_accept(int socketfd, struct sockaddr *addr, socklen_t addrlen) {
 		lock_mutex(__func__);
 		while(status != established) {
 			log_write("Waiting for ACK to finalize connection..");
-			pthread_cond_wait(&connection_cond, &core_mutex);
+			pthread_cond_wait(&conn_state_chng, &core_mutex);
 		}
 		unlock_mutex(__func__);
 
@@ -314,7 +299,7 @@ int gbn_verify_socket(int socket) {
  *	packet
  *
  */
-ssize_t gbn_send(void *data, size_t len) {
+ssize_t gbnc_send(void *data, size_t len) {
 	ssize_t return_value = 0;
 	ssize_t sent = 0;
 	datapkt_t pkt;
@@ -341,7 +326,7 @@ ssize_t gbn_send(void *data, size_t len) {
 			//	Push the packet in the buffer (and wait for base to change while buffer full)
 			while(snd_buffer_push(&pkt) < 0) {
 				log_write("gbn_send(): Waiting for buffer to have some space.");
-				if(pthread_cond_wait(&base_change, &core_mutex) < 0) {
+				if(pthread_cond_wait(&base_chng, &core_mutex) < 0) {
 					sprintf(log_msg, "pthread_cond_wait() failed. (%s)", strerror(errno));
 					log_write(log_msg);
 				}
@@ -509,10 +494,10 @@ void retransmission() {
 			lock_mutex(__func__);
 
 			log_println();
-			log_write("retransmission(): Trying to re-send the window (and last ack)");
+			log_write("retransmission(): Trying to re-send the window (and last valid ack)");
 
-			if(response_ack.type == ACK)
-				if(send_ack(connsocket, &response_ack) < 0)
+			if(valid_ack.type == ACK)
+				if(send_ack(connsocket, &valid_ack) < 0)
 					printf("retransmission(): send_ack failed.\n");
 
 			//	Backup window pkts (not doing so will cause some pkts retransmission as valid acks arrives)
@@ -537,14 +522,14 @@ void retransmission() {
 	case synsent:
 	case synrcvd:
 		log_write("Timeout reached for SYN message, re-sending.");
-		if(send_ack(connsocket, &init_buffer) < 0)
+		if(send_ack(connsocket, &valid_syn) < 0)
 			printf("retransmission(): send_ack for syn retransmission failed.\n");
 		start_timer(__func__);
 		break;
 	case finwait1:
 	case lastack:
 		log_write("Timeout reached for FIN message, resending.");
-		if(send_ack(connsocket, &response_fin) < 0)
+		if(send_ack(connsocket, &valid_fin) < 0)
 			printf("retransmission(): send_ack for fin retransmission failed.\n");
 		start_timer(__func__);
 		break;
@@ -620,8 +605,8 @@ void incoming_pkt_handler() {
 								if(deliver_data(datapkt) < 0)
 									log_write("incoming_pkt_handler(): Error delivering data to receiving buffer");
 
-								// Update response_ack
-								if(make_servicepkt(datapkt->seqn, ACK, &response_ack) < 0)
+								// Update valid_ack
+								if(make_servicepkt(datapkt->seqn, ACK, &valid_ack) < 0)
 									printf("inc_pkt_hand(): make servicepkt failed.\n");
 
 								// Update expectedseqn (in isolation)
@@ -640,19 +625,19 @@ void incoming_pkt_handler() {
 								}
 							}
 
-							// Send response_ack
-							if(send_ack(connsocket, &response_ack) != sizeof(servicepkt_t))
+							// Send valid_ack
+							if(send_ack(connsocket, &valid_ack) != sizeof(servicepkt_t))
 								log_write("incoming_pkt_handler(): Error sending ACK.");
 
 						} else {
 							log_write("Datapkt incoming. I'm closing tho, so I'm not processing it, just acking.");
 
-							// Update response_ack
-							if(make_servicepkt(datapkt->seqn, ACK, &response_ack) < 0)
+							// Update valid_ack
+							if(make_servicepkt(datapkt->seqn, ACK, &valid_ack) < 0)
 								log_write("incoming_pkt_handler(): Error making ACK.");
 
-							// Send response_ack
-							if(send_ack(connsocket, &response_ack) != sizeof(servicepkt_t))
+							// Send valid_ack
+							if(send_ack(connsocket, &valid_ack) != sizeof(servicepkt_t))
 								log_write("incoming_pkt_handler(): Error sending ACK.");
 						}
 					} else {
@@ -661,7 +646,7 @@ void incoming_pkt_handler() {
 
 				} else if(status == synrcvd) {
 					log_write("Client already sending, but I'm still waiting for the 3wh ACK. Sending SYNACK again.");
-					send_ack(connsocket, &init_buffer);
+					send_ack(connsocket, &valid_syn);
 				} else {
 					log_write("Ignoring datapkt (connection not established).");
 				}
@@ -678,12 +663,12 @@ void incoming_pkt_handler() {
 
 					switch(servicepkt->type) {
 					case FIN:
-						if(response_fin.type == 0 || status == finwait2 || status == finwait1) {
+						if(valid_fin.type == 0 || status == finwait2 || status == finwait1) {
 							log_write("incoming_pkt_handler(): passive_close");
 							passive_close(servicepkt->seqn);
 						} else {
 							log_write("Duplicate FIN received. Sending FINACK again.");
-							send_ack(connsocket, &response_fin);
+							send_ack(connsocket, &valid_fin);
 						}
 						break;
 					case FINACK:
@@ -696,7 +681,7 @@ void incoming_pkt_handler() {
 							lock_mutex(__func__);
 							status = established;
 							stop_timer(__func__);
-							pthread_cond_broadcast(&connection_cond);
+							pthread_cond_broadcast(&conn_state_chng);
 							unlock_mutex(__func__);
 						} else if(servicepkt->seqn < base + WIN &&
 							servicepkt->seqn >= base) {		//	Verifying seqn
@@ -737,7 +722,7 @@ void incoming_pkt_handler() {
 							log_write(log_msg);
 
 							//	Signal the base change
-							if(pthread_cond_broadcast(&base_change) != 0)
+							if(pthread_cond_broadcast(&base_chng) != 0)
 								printf("Error signaling window base change!\n");
 
 							unlock_mutex(__func__);
@@ -757,16 +742,16 @@ void incoming_pkt_handler() {
 						log_write("SYNACK received. ACK-ing it.");
 
 						// Sending ACK
-						if(make_servicepkt(0, ACK, &init_buffer) < 0) {
+						if(make_servicepkt(0, ACK, &valid_syn) < 0) {
 							printf("gbnc_connect(): make_servicepkt error.");
 						}
 
 						// Sending ACK
-						if(make_servicepkt(0, ACK, &response_ack) < 0) {
+						if(make_servicepkt(0, ACK, &valid_ack) < 0) {
 							printf("gbnc_connect(): make_servicepkt error.");
 						}
 
-						if(send_ack(connsocket, &init_buffer) < 0) {
+						if(send_ack(connsocket, &valid_syn) < 0) {
 							perror("send_ack in gbn_connect");
 						}
 
@@ -774,7 +759,7 @@ void incoming_pkt_handler() {
 
 						start_timer(__func__);
 
-						pthread_cond_broadcast(&connection_cond);
+						pthread_cond_broadcast(&conn_state_chng);
 
 						unlock_mutex(__func__);
 						break;
@@ -820,18 +805,18 @@ int passive_close(int seqn) {
 
 			lock_mutex(__func__);
 
-			if(response_fin.type == 0) {
+			if(valid_fin.type == 0) {
 				log_write("New FIN received. FINACKing and FINning.");
 
-				make_servicepkt(seqn, FINACK, &response_fin);
-				send_ack(connsocket, &response_fin);
+				make_servicepkt(seqn, FINACK, &valid_fin);
+				send_ack(connsocket, &valid_fin);
 
-				make_servicepkt(seqn+1, FIN, &response_fin);
+				make_servicepkt(seqn+1, FIN, &valid_fin);
 			} else {
 				log_write("Finished to write. FINning");
 			}
 
-			send_ack(connsocket, &response_fin);
+			send_ack(connsocket, &valid_fin);
 			next_seqn++;
 			log_write("status: lastack");
 			status = lastack;
@@ -847,10 +832,10 @@ int passive_close(int seqn) {
 			lock_mutex(__func__);
 
 			log_write("FIN received, FINACKing. Will send FIN at the end of gbn_write().");
-			make_servicepkt(seqn, FINACK, &response_fin);
-			send_ack(connsocket, &response_fin);
+			make_servicepkt(seqn, FINACK, &valid_fin);
+			send_ack(connsocket, &valid_fin);
 
-			make_servicepkt(seqn+1, FIN, &response_fin);
+			make_servicepkt(seqn+1, FIN, &valid_fin);
 
 			log_write("status: closewait");
 			status = closewait;
@@ -864,7 +849,7 @@ int passive_close(int seqn) {
 			lock_mutex(__func__);
 
 			log_write("Finished send! FINning and waiting for last ack.");
-			send_ack(connsocket, &response_fin);
+			send_ack(connsocket, &valid_fin);
 			next_seqn++;
 			log_write("status: lastack");
 			start_timer(__func__);
@@ -898,8 +883,8 @@ int passive_close(int seqn) {
 			lock_mutex(__func__);
 
 			stop_timer(__func__);
-			make_servicepkt(seqn, FINACK, &response_fin);
-			send_ack(connsocket, &response_fin);
+			make_servicepkt(seqn, FINACK, &valid_fin);
+			send_ack(connsocket, &valid_fin);
 			log_write("status: timedwait");
 			status = timedwait;
 			start_timer(__func__);
@@ -924,9 +909,9 @@ int gbnc_shutdown(int socket) {
 
 
 		if(status == established || status == sending
-				|| response_fin.seqn != 0) {
-			make_servicepkt(next_seqn, FIN, &response_fin);
-			send_ack(connsocket, &response_fin);
+				|| valid_fin.seqn != 0) {
+			make_servicepkt(next_seqn, FIN, &valid_fin);
+			send_ack(connsocket, &valid_fin);
 
 			status = finwait1;
 			log_write("status: finwait1");
@@ -935,7 +920,7 @@ int gbnc_shutdown(int socket) {
 
 			if(status != sending) {
 				while(status != closed)
-					pthread_cond_wait(&conn_close, &core_mutex);
+					pthread_cond_wait(&conn_closed, &core_mutex);
 			}
 
 			return_value = 0;
@@ -980,7 +965,7 @@ void wait_delivery() {
 	while(base < next_seqn) {
 		log_write("wait_delivery(): Waiting for the last acks to arrive.");
 		log_println();
-		if(pthread_cond_wait(&base_change, &core_mutex) < 0) {	// NB: this releases the mutex
+		if(pthread_cond_wait(&base_chng, &core_mutex) < 0) {	// NB: this releases the mutex
 			log_write("wait_delivery(): pthread_cond_wait() failed.");
 		}
 	}
@@ -1000,7 +985,7 @@ void wait_delivery() {
 		passive_close(0);
 		lock_mutex(__func__);
 		while(status != closed)
-			pthread_cond_wait(&conn_close, &core_mutex);
+			pthread_cond_wait(&conn_closed, &core_mutex);
 		unlock_mutex(__func__);
 		break;
 	}
@@ -1073,7 +1058,7 @@ int gbn_core_init() {
 		//	Allocate the send buffer for unacked pkts (of size WIN)
 		snd_buffer_init(WIN);
 
-		make_servicepkt(0, 0, &response_ack);
+		make_servicepkt(0, 0, &valid_ack);
 
 		lock_mutex(__func__);
 
@@ -1095,7 +1080,7 @@ int gbn_core_init() {
 		next_seqn = 1;
 		expectedseqn = 1;
 
-		make_servicepkt(0, 0, &response_fin);
+		make_servicepkt(0, 0, &valid_fin);
 
 		return_value = 0;
 		gbn_init = 1;
@@ -1143,7 +1128,7 @@ int gbn_core_fin() {
 
 		status = closed;
 
-		pthread_cond_broadcast(&conn_close);
+		pthread_cond_broadcast(&conn_closed);
 
 		unlock_mutex(__func__);
 

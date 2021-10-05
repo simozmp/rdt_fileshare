@@ -23,7 +23,11 @@ int rcv_buffer_destroy();
 
 
 /*
- *	Allocate memory for the queue, with given dimensions (must be greater than 0)
+ *	Allocate memory for the receiver buffer queue with given dimensions
+ *	(must be greater than 0)
+ *
+ *	On success, the size of the receiver buffer is returned. In case of error,
+ *	-1 is returned (and errno is set appropriately)
  *
  */
 int rcv_buffer_init(int dimension) {
@@ -71,12 +75,6 @@ ssize_t rcv_buffer_fetch(const void* buffer, size_t len) {
 	ssize_t return_value = -1;
 	size_t tocpy = 0;
 
-	struct timespec max_wait;
-
-	timespec_get(&max_wait, TIME_UTC);
-
-	max_wait.tv_sec += 6;
-
 	errno = 0;		//	Zero out errno
 
 	//	Error handling
@@ -84,7 +82,8 @@ ssize_t rcv_buffer_fetch(const void* buffer, size_t len) {
 		errno = EFAULT;		//	"Bad address"
 
 	else if(init != 1)		//	If buffer not initialized
-		errno = ENODATA;	//	"No data available", couldn't find a better fit
+		errno = ENODATA;		//	"No data available", couldn't find a better
+								//	fitting errno
 
 	else {
 
@@ -97,7 +96,7 @@ ssize_t rcv_buffer_fetch(const void* buffer, size_t len) {
 
 			// Waiting for stream to be ready
 			while(!(buffer_size > 0) && init == 1)
-				if(pthread_cond_wait(&rcv_buffer_change, &rcv_buffer_mutex/*, &max_wait*/) < 0)
+				if(pthread_cond_wait(&rcv_buffer_change, &rcv_buffer_mutex) < 0)
 					return -1;	//	errno will be set by the syscall
 
 			if(init == 0) {
@@ -112,7 +111,8 @@ ssize_t rcv_buffer_fetch(const void* buffer, size_t len) {
 				//	Removing copied data from the buffer
 				if(buffer_size > tocpy) {
 
-					//	Flushing read data by moving left remaining stream content
+					//	Flushing read data by moving left
+					//	remaining stream content
 					memmove((void*) rcv_buffer, (void*) rcv_buffer+tocpy,
 							buffer_size-tocpy);
 					buffer_size -= tocpy;
@@ -171,7 +171,7 @@ ssize_t rcv_buffer_write(const void* newdata, size_t len) {
 
 		// Signal the rcv_buffer change
 		if((return_value = pthread_cond_broadcast(&rcv_buffer_change)) != 0)
-			printf("\nrcv_buffer_write(): pthread_cond_broadcast failed (%s)\n", strerror(return_value));
+			return -1;	//	errno will be set by syscall
 
 
 		pthread_mutex_unlock(&rcv_buffer_mutex);

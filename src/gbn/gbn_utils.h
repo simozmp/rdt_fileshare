@@ -1,10 +1,3 @@
-/*
- * gbn_utils.h
- *
- *  Created on: 4 set 2021
- *      Author: simozmp
- */
-
 #ifndef GBN_UTILS_H
 #define GBN_UTILS_H
 

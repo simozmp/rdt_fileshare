@@ -23,7 +23,7 @@ int gbnc_shutdown(int socket);
 int gbnc_close(int socket);
 void wait_delivery();
 
-ssize_t gbn_send(void *data, size_t len);
+ssize_t gbnc_send(void *data, size_t len);
 ssize_t gbn_rcv(void *data, size_t len);
 
 #endif

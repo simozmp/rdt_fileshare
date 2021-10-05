@@ -6,23 +6,24 @@
 #include <stdio.h>
 #include <errno.h>
 
-//	List node
+//	Node of the linked list
 struct bufnode_t{
 	datapkt_t pkt;					//	datapkt
 	struct timespec snd_time;		//	Time of last send attempt for the pkt
 	struct bufnode_t *next;			//	Pointer to the next node
 };
 
-//	An integer to keep the total number of pkt nodes in the list
+//	An integer to keep the size of the list
 int snd_buf_capacity = 0;
 
-//	An integer to keep the number of valid pkts in the list
+//	An integer to keep the number of valid pkts currently in the list
 int snd_buf_len = 0;
 
 //	Pointers to the head and tail nodes
 struct bufnode_t* snd_buffer_tail = NULL;
 struct bufnode_t* snd_buffer_head = NULL;
 
+//	A mutex to work in isolation with critical operations
 pthread_mutex_t snd_buf_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /*
@@ -35,7 +36,9 @@ int snd_buffer_init(int size) {
 	
 	int return_value;
 
-	if(snd_buf_capacity == 0) {		//	Init
+	if(snd_buf_capacity == 0) {
+
+		//	Init-ing
 
 		//	Creating first node
 		snd_buffer_head = (struct bufnode_t*) malloc(sizeof(struct bufnode_t));
@@ -156,10 +159,10 @@ char* snd_buf_p(char* result) {
 	pthread_mutex_lock(&snd_buf_mutex);
 
 	/*
-	 *	Allocate space for a partial presentation, a string containing 8 characters
-	 *	(maximum, in case of integers between 1000~9999) for each of the middle nodes
-	 *	(for the last one even less than 8 chars). It is used to prevent sprintf
-	 *	issues by overlapping source and destination
+	 *	Allocate space for a partial presentation, a string containing 8 chars
+	 *	(maximum, in case of integers between 1000~9999) for each of the middle
+	 *	nodes (for the last one even less than 8 chars). It is used to prevent
+	 *	sprintf issues by overlapping source and destination
 	 */
 	char* partial_result = malloc(sizeof(char)*((snd_buf_capacity * 10)+1));
 
@@ -228,8 +231,8 @@ int snd_buf_get(datapkt_t *pkt, int offset) {
  *	The function returns a struct timespec value, which represents the RTT
  *	(in-flight time) of the acked packet.
  *
- *	If no pkt with given seqn is found in the list, all the fields in the returning
- *	structure will be set to 0
+ *	If no pkt with given seqn is found in the list, all the fields in the
+ *	returning structure will be set to 0
  *
  */
 struct timespec snd_buf_ack(int ack_seqn) {
@@ -272,7 +275,7 @@ struct timespec snd_buf_ack(int ack_seqn) {
 
 /*
  *	This functions marks the packet with given seqn as sent,
- *	with current timestamp. This is gonna be called asap after a packet send.
+ *	with current timestamp. This should be called asap after a packet send.
  *
  *	The function returns -1 if no pkt with given seqn is found, or 0
  *	in case of success

@@ -25,28 +25,33 @@
 /*							IMPLEMENTATIONS									*/
 
 /*
- *	This functions returns a gbn compatible socket
+ *	This functions returns a gbn compatible socket, or -1 in case of error
+ *	(errno will be set appropriately).
  *
  */
 int gbn_socket() {
 	int return_value = socket(AF_INET, SOCK_DGRAM, 0);
 
-	//	Before successfully return the socket, the following tries and change the receiving
-	//	buffer size: this will prevent packets discards with induced retransmissions
+	errno = 0;		//	Zero out errno
 
+	/*
+	 *	Before successfully return the socket, the following tries and change
+	 *	the receiving buffer size for the UDP socket: this will prevent packets
+	 *	discards on receiver side (and induced retransmissions)
+	 *
+	 */
 	int receiver_buffer_size = sizeof(datapkt_t)*WIN;
 
 	if(setsockopt(return_value, SOL_SOCKET, SO_RCVBUF,
-			&receiver_buffer_size, sizeof(receiver_buffer_size)) < 0) {
-		perror("gbn_socket");
+			&receiver_buffer_size, sizeof(receiver_buffer_size)) < 0)
 		return_value = -1;
-	}
 
 	return return_value;
 }
 
 /*
- *	This is the connection
+ *	connect() implementation for gbn socket
+ *
  */
 int gbn_connect(int socketfd, const struct sockaddr *servaddr,
 		socklen_t addrlen) {
@@ -54,6 +59,7 @@ int gbn_connect(int socketfd, const struct sockaddr *servaddr,
 }
 
 /*
+ *	accept() implementation for gbn socket
  *
  */
 int gbn_accept(int socketfd, struct sockaddr *addr, socklen_t addrlen) {
@@ -62,20 +68,30 @@ int gbn_accept(int socketfd, struct sockaddr *addr, socklen_t addrlen) {
 }
 
 
+/*
+ *	shutdown() implementation for gbn socket
+ *
+ */
 int gbn_shutdown(int socketfd) {
 
 	return gbnc_shutdown(socketfd);
 }
 
-
+/*
+ *	close() implementation for gbn socket
+ *
+ */
 int gbn_close(int socketfd) {
 
 	return gbnc_close(socketfd);
 }
 
 /*
- *	This function splits the message into pieces, and then sends them by calling
- *	the lower level core function gbn_send
+ *	This function splits the message into pieces, and then sends them one by
+ *	one by calling the lower level core function gbnc_send()
+ *
+ *	The function returns the actual number of bytes that has been sent, or -1
+ *	in case of error. (errno will be set appropriately)
  *
  */
 ssize_t gbn_write(int socket, void *buf, size_t len) {
@@ -89,7 +105,7 @@ ssize_t gbn_write(int socket, void *buf, size_t len) {
 	errno = 0;		// Zero out errno
 
 	if(gbn_verify_socket(socket) < 0) {		// Verifying the socket
-		errno = ENOTSOCK;	//	"Socket operation on non-socket"
+		errno = ENOTSOCK;	//	"Socket operation on non-socket" (non-gbn sock)
 	} else {
 
 		data_sent = 0;
@@ -104,16 +120,15 @@ ssize_t gbn_write(int socket, void *buf, size_t len) {
 			// Computing data field lenght for the current packet
 			data_len = PCKDATASIZE < data_left ? PCKDATASIZE : data_left;
 
-			if((now_sent = gbn_send(buf + (i*PCKDATASIZE), data_len)) == -1) {
+			if((now_sent = gbnc_send(buf + (i*PCKDATASIZE), data_len)) == -1) {
 				perror("gbn_send");
 			}
 
 			data_sent += data_len;
 		}
-
-		//gbn_send(NULL, 0);
 	}
 
+	//	Waiting for all pkts to be acked
 	wait_delivery();
 
 	return data_sent;
@@ -126,19 +141,20 @@ ssize_t gbn_write(int socket, void *buf, size_t len) {
  */
 ssize_t gbn_read(int socket, void *buf, size_t count) {
 
-	ssize_t read_count = -1;	// For return value
+	ssize_t data_read = -1;			// For return value
 
 	//	Error handling
 	if(buf == NULL)
-		errno = EFAULT;		//	"Bad address"
+		errno = EFAULT;			//	"Bad address"
 
 	else if(gbn_verify_socket(socket) < 0)
-		errno = ENOTSOCK;	//	"Socket operation on non-socket"
+		errno = ENOTSOCK;		//	"Socket operation on non-socket"
 
 	else
-		if((read_count = rcv_buffer_fetch(buf, count)) < 0) {
+		//	Fetching count bytes from receiver buffer
+		if((data_read = rcv_buffer_fetch(buf, count)) < 0) {
 			perror("gbn_read");
 		}
 
-	return read_count;
+	return data_read;
 }

@@ -3,10 +3,13 @@
 
 #include <sys/types.h>
 #include <stdint.h>
-
 #include "gbn/config.h"
 
+
+
+
 /*									TYPEDEFS								*/
+
 typedef struct {
 	int type;
 	unsigned int seqn;
@@ -29,6 +32,9 @@ enum pkt_type {
 	FIN,
 	FINACK
 };
+
+
+
 
 /*								PROTOTYPES									*/
 

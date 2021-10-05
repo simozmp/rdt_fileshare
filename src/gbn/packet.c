@@ -4,11 +4,20 @@
 #include <string.h>
 #include <stdio.h>
 
+
+
+
 /*						PRIVATE FCTNS PROTOTYPES							*/
 
 uint16_t ones_complement_sum(uint16_t a, uint16_t b);
 uint16_t data_checksum(datapkt_t *packet);
 uint16_t service_checksum(servicepkt_t *packet);
+
+
+
+
+/*							IMPLEMENTATION									*/
+
 
 /*
  *	Initializes the datapkt pointed by packet with given attributes
@@ -60,6 +69,8 @@ int make_servicepkt(int seq, const int type, servicepkt_t* packet) {
 				packet->seqn = seq;
 				packet->checksum = service_checksum(packet);
 				break;
+			default:
+				return_value = -1;
 		}
 	}
 
@@ -67,7 +78,7 @@ int make_servicepkt(int seq, const int type, servicepkt_t* packet) {
 }
 
 /*
- *	Returns 1 if the checksum field is valid for the packet data
+ *	Returns 1 if the checksum field is valid for pkt
  *
  */
 int verify_datapkt(datapkt_t *pkt) {
@@ -78,7 +89,7 @@ int verify_datapkt(datapkt_t *pkt) {
 }
 
 /*
- *	Returns 1 if the checksum field is valid for the packet data
+ *	Returns 1 if the checksum field is valid for pkt
  *
  */
 int verify_servicepkt(servicepkt_t *pkt) {
@@ -109,24 +120,24 @@ uint16_t ones_complement_sum(uint16_t a, uint16_t b) {
 /*
  *	Computes and return checksum for the datapkt pointed by packet
  *
- *	The function does not read the checksum field of the packet, and
+ *	The function does not consider the checksum field of the packet, and
  *	treat the field as zeroed
  *
  */
 uint16_t data_checksum(datapkt_t *packet) {
 
-	// Backup checksum value for the packet and set the field to zero
+	//	Backup checksum value for the packet and set the field to zero
 	uint16_t pkt_old_checksum = packet->checksum;
 	packet->checksum = 0;
 
 	uint16_t* pktstart = (uint16_t*) packet;
 	uint16_t sum = 0;	// Two bytes to keep the partial sum
 
-	// For each uint16 of the packet stack computes the ocs
+	//	For each uint16 of the packet stack computes the ocs
 	for(int i=0; i<sizeof(datapkt_t)/2; i++)
 		sum = ones_complement_sum(sum, pktstart[i]);
 
-	// Restoring the old checksum in the packet
+	//	Restoring the old checksum in the packet
 	packet->checksum = pkt_old_checksum;
 
 	return ~sum;
@@ -141,18 +152,18 @@ uint16_t data_checksum(datapkt_t *packet) {
  */
 uint16_t service_checksum(servicepkt_t *packet) {
 
-	// Backup checksum value for the packet and set the field to zero
+	//	Backup checksum value for the packet and set the field to zero
 	uint16_t pkt_old_checksum = packet->checksum;
 	packet->checksum = 0;
 
 	uint16_t* pktstart = (uint16_t*) packet;
 	uint16_t sum = 0;	// Two bytes to keep the partial sum
 
-	// For each uint16 of the packet stack computes the ocs
+	//	For each uint16 of the packet stack computes the ocs
 	for(int i=0; i<sizeof(servicepkt_t)/2; i++)
 		sum = ones_complement_sum(sum, pktstart[i]);
 
-	// Restoring the old checksum in the packet
+	//	Restoring the old checksum in the packet
 	packet->checksum = pkt_old_checksum;
 
 	return ~sum;
