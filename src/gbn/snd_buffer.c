@@ -1,10 +1,10 @@
-#include "gbn/snd_buf.h"
 #include "gbn/gbn_utils.h"
 #include <string.h>
 #include <stdlib.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <errno.h>
+#include <gbn/snd_buffer.h>
 
 //	Node of the linked list
 struct bufnode_t{
@@ -32,7 +32,7 @@ pthread_mutex_t snd_buf_mutex = PTHREAD_MUTEX_INITIALIZER;
  *	Returns 0 in case of success, -1 if buf already initiated.
  *
  */
-int snd_buffer_init(int size) {
+int snd_buf_init(int size) {
 	
 	int return_value;
 
@@ -76,7 +76,7 @@ int snd_buffer_init(int size) {
  *	This functions destroys the list by deleting each node. Returns 0 on success.
  *
  */
-int snd_buffer_destroy() {
+int snd_buf_destroy() {
 	
 	int return_value;
 	struct bufnode_t *next_head;
@@ -104,7 +104,7 @@ int snd_buffer_destroy() {
  *	appropriately in this case).
  *
  */
-int snd_buffer_push(datapkt_t *new_pkt) {
+int snd_buf_push(datapkt_t *new_pkt) {
 	
 	int return_value;
 	struct bufnode_t* cursor;

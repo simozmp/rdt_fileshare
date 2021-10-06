@@ -6,7 +6,7 @@
 #include <stdio.h>
 #include <unistd.h>
 
-#include "gbn/gbn.h"
+#include "../gbn/libgbn.h"
 #include "test_filesend/config.h"
 
 int main() {

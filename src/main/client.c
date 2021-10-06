@@ -6,11 +6,11 @@
 
 #include <dirent.h>
 #include <errno.h>
+#include <gbn/libgbn.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "gbn/gbn.h"
 #include "main/config.h"
 #include "main/file_sharing.h"
 
@@ -242,7 +242,7 @@ int session() {
 				strcpy(filename, strtok(NULL, ""));
 
 				if(strlen(filename) == 0) {
-					printf("Something went wrong\n");
+					printf("Something went wrong.\n");
 				} else {
 					printf("Uploading \"%s\" file to server..\n", filename);
 
@@ -254,6 +254,7 @@ int session() {
 				}
 
 			} else
+
 				printf("%s\n", response);
 
 			break;

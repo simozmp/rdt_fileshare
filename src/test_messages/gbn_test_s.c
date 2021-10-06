@@ -6,7 +6,7 @@
 #include <stdio.h>
 #include <unistd.h>
 
-#include "gbn/gbn.h"
+#include "../gbn/libgbn.h"
 
 #define SERV_PORT 5193
 #define MAXLINE 80

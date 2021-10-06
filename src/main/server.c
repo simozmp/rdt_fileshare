@@ -10,7 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <dirent.h>
-#include "gbn/gbn.h"
+#include <gbn/libgbn.h>
 #include "main/config.h"
 #include "main/file_sharing.h"
 

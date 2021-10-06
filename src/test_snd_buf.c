@@ -6,19 +6,19 @@
  */
 
 
-#include "gbn/snd_buf.h"
 #include "gbn/packet.h"
 #include <stdio.h>
+#include "gbn/snd_buffer.h"
 
 int main() {
 
 	datapkt_t pkt;
 
-	snd_buffer_init(5);
+	snd_buf_init(5);
 
 	for(int i=0; i<6; i++) {
 		pkt.seqn = i;
-		snd_buffer_push(&pkt);
+		snd_buf_push(&pkt);
 		printf("Pushed pkt n. %d. Buffer content: %s\n", pkt.seqn, snd_buf_p());
 	}
 
@@ -29,7 +29,7 @@ int main() {
 
 	for(int i=0; i<6; i++) {
 		pkt.seqn = i;
-		snd_buffer_push(&pkt);
+		snd_buf_push(&pkt);
 		printf("Pushed pkt n. %d. Buffer content: %s\n", pkt.seqn, snd_buf_p());
 	}
 

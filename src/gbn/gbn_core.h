@@ -7,9 +7,8 @@
 #include "config.h"
 #include "packet.h"
 #include "rcv_buffer.h"
-#include "snd_buf.h"
-
 #include <sys/socket.h>
+#include "snd_buffer.h"
 
 
 

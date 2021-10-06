@@ -4,12 +4,12 @@
  *  Created on: 14 set 2021
  *      Author: simozmp
  */
+#include <gbn/libgbn.h>
 #include <sys/stat.h>
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
 #include <stdlib.h>
-#include "gbn/gbn.h"
 #include "main/config.h"
 #include "main/file_sharing.h"
 

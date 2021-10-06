@@ -1,4 +1,4 @@
-#include "gbn.h"
+#include "libgbn.h"
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -16,7 +16,7 @@
 #include "gbn_core.h"
 #include "packet.h"
 #include "rcv_buffer.h"
-#include "snd_buf.h"
+#include "snd_buffer.h"
 
 
 

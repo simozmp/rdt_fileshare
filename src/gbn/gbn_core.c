@@ -153,9 +153,10 @@ int gbnc_connect(int socketfd, const struct sockaddr *servaddr,
 
 	//	Saving the presentation for the server address
 	if(inet_ntop(AF_INET, servaddr->sa_data, servaddr_p, 40*sizeof(char)) <= 0)
-		perror("ntop\n");
+		perror("inet_ntop");
 
-	sprintf(log_msg, "Connection attempt. Trying to reach server at %s", servaddr_p);
+	sprintf(log_msg, "Connection attempt. Trying to reach server at %s",
+			servaddr_p);
 	log_write(log_msg);
 
 	//	Making SYN pkt
@@ -272,7 +273,7 @@ int gbnc_accept(int socketfd, struct sockaddr *addr, socklen_t addrlen) {
 
 		//	Saving the presentation for the server address
 		if(inet_ntop(AF_INET, remote_addr.sa_data, remote_addr_p, 40*sizeof(char)) <= 0)
-			perror("ntop\n");
+			perror("inet_ntop");
 
 		sprintf(log_msg, "Connection established. Remote address: %s", remote_addr_p);
 		log_write(log_msg);
@@ -324,7 +325,7 @@ ssize_t gbnc_send(void *data, size_t len) {
 			lock_mutex(__func__);
 
 			//	Push the packet in the buffer (and wait for base to change while buffer full)
-			while(snd_buffer_push(&pkt) < 0) {
+			while(snd_buf_push(&pkt) < 0) {
 				log_write("gbn_send(): Waiting for buffer to have some space.");
 				if(pthread_cond_wait(&base_chng, &core_mutex) < 0) {
 					sprintf(log_msg, "pthread_cond_wait() failed. (%s)", strerror(errno));
@@ -1056,7 +1057,7 @@ int gbn_core_init() {
 		sigaction(SIGALRM, &on_sigalrm, &old_action);
 
 		//	Allocate the send buffer for unacked pkts (of size WIN)
-		snd_buffer_init(WIN);
+		snd_buf_init(WIN);
 
 		make_servicepkt(0, 0, &valid_ack);
 
@@ -1102,7 +1103,7 @@ int gbn_core_fin() {
 		log_write("Finalizing connection.");
 
 		//	Destroying snd_buf
-		snd_buffer_destroy(WIN);
+		snd_buf_destroy(WIN);
 
 		rcv_buffer_destroy();
 
