@@ -1,6 +1,11 @@
 #ifndef GBN_UTILS_H
 #define GBN_UTILS_H
 
+
+
+
+/*									INCLUDES								*/
+
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
@@ -11,6 +16,10 @@
 #include <arpa/inet.h>
 #include <time.h>
 
+
+
+
+/*								PROTOTYPES									*/
 
 int log_open(char* filename);
 int log_dump();

@@ -57,51 +57,54 @@ int main() {
 	message = malloc(50);
 	filepath = malloc(50);
 
+	while(1) {
 
-	printf("Waiting for incoming files..\n");
-	if((n = gbn_read(socksd, message, 50)) < 0) {
-		perror("read error");
-	} else {
-		printf("filename: %s\n", message);
-		printf("preparing to receive\n");
-	}
-
-	sprintf(filepath, "serverpool/%s", message);
-	printf("Dumping received file to %s\n", filepath);
-
-	file = fopen(filepath, "w");
-	free(filepath);
-
-	buffer = malloc(STEP);
-
-	if((n = gbn_write(socksd, "Ready", 6)) < 0) {
-		perror("write error");
-	} else {
-		printf("Ready to receive\n");
-	}
-
-	while(1 == 1) {
-
-		printf("\nReading chunck.\n");
-
-		n=0;
-		n = gbn_read(socksd, buffer, STEP);
-
-		if(n < 0)
-			perror("gbn_read");
-		else {
-			memcpy(message, buffer, 50*sizeof(char));
-
-			if(strcmp(message, "Done") != 0) {
-				printf("Writing on file.\n");
-				fwrite(buffer, n, 1, file);
-			} else
-				break;
+		printf("Waiting for incoming files..\n");
+		if((n = gbn_read(socksd, message, 50)) <= 0) {
+			printf("Host disconnected. Closing server.\n");
+			gbn_close(socksd);
+			return 0;
+		} else {
+			printf("n = %d, filename: %s\n",n, message);
+			printf("preparing to receive\n");
 		}
-	}
 
-	printf("File successfully written on disk, closing..\n");
-	fclose(file);
+		sprintf(filepath, "serverpool/%s", message);
+		printf("Dumping received file to %s\n", filepath);
+
+		file = fopen(filepath, "w");
+		free(filepath);
+
+		buffer = malloc(STEP);
+
+		if((n = gbn_write(socksd, "Ready", 6)) < 0) {
+			perror("write error");
+		} else {
+			printf("Receiving file..\n");
+		}
+
+		while(1) {
+
+			n=0;
+			n = gbn_read(socksd, buffer, STEP);
+
+			if(n < 0)
+				perror("gbn_read");
+			else {
+				memcpy(message, buffer, 50*sizeof(char));
+
+				if(strcmp(message, "Done") != 0) {
+					fwrite(buffer, n, 1, file);
+				} else
+					break;
+			}
+		}
+
+		printf("File successfully written on disk, closing..\n");
+		fclose(file);
+
+		memset(message, 0, 50);
+	}
 
 	printf("Shutting down\n");
 

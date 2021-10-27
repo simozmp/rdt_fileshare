@@ -1,10 +1,21 @@
-#include "gbn/gbn_utils.h"
+#include <gbn/snd_buffer.h>
+
+
+
+
+/*									INCLUDES								*/
+
 #include <string.h>
 #include <stdlib.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <errno.h>
-#include <gbn/snd_buffer.h>
+#include "gbn/gbn_utils.h"
+
+
+
+
+/*									TYPEDEFS								*/
 
 //	Node of the linked list
 struct bufnode_t{
@@ -12,6 +23,11 @@ struct bufnode_t{
 	struct timespec snd_time;		//	Time of last send attempt for the pkt
 	struct bufnode_t *next;			//	Pointer to the next node
 };
+
+
+
+
+/*							GLOBAL VARIABLES								*/
 
 //	An integer to keep the size of the list
 int snd_buf_capacity = 0;
@@ -25,6 +41,11 @@ struct bufnode_t* snd_buffer_head = NULL;
 
 //	A mutex to work in isolation with critical operations
 pthread_mutex_t snd_buf_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+
+
+
+/*							IMPLEMENTATIONS									*/
 
 /*
  *	Allocate the buffer (as a circular linked list)

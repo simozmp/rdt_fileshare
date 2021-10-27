@@ -18,11 +18,9 @@ int gbnc_connect(int socketfd, const struct sockaddr *servaddr,
 		socklen_t addrlen);
 int gbnc_accept(int socketfd, struct sockaddr *addr, socklen_t addrlen);
 int gbn_verify_socket(int socket);
+ssize_t gbnc_send(void *data, size_t len);
+void wait_delivery();
 int gbnc_shutdown(int socket);
 int gbnc_close(int socket);
-void wait_delivery();
-
-ssize_t gbnc_send(void *data, size_t len);
-ssize_t gbn_rcv(void *data, size_t len);
 
 #endif

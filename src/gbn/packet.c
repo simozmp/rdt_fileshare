@@ -1,5 +1,10 @@
 #include "gbn/packet.h"
 
+
+
+
+/*									INCLUDES								*/
+
 #include <math.h>
 #include <string.h>
 #include <stdio.h>
@@ -17,7 +22,6 @@ uint16_t service_checksum(servicepkt_t *packet);
 
 
 /*							IMPLEMENTATION									*/
-
 
 /*
  *	Initializes the datapkt pointed by packet with given attributes

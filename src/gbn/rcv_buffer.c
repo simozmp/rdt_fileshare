@@ -1,11 +1,21 @@
 #include "gbn/rcv_buffer.h"
 
+
+
+
+/*									INCLUDES								*/
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <pthread.h>
 #include <errno.h>
 #include <sys/time.h>
+
+
+
+
+/*							PRIVATE VARIABLES								*/
 
 unsigned char* rcv_buffer = NULL;
 int buffer_size = -1;
@@ -15,12 +25,21 @@ int init = 0;
 pthread_mutex_t rcv_buffer_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t rcv_buffer_change = PTHREAD_COND_INITIALIZER;
 
+
+
+
+/*						PRIVATE FCTNS PROTOTYPES							*/
+
 int rcv_buffer_init(int dimension);
 ssize_t rcv_buffer_fetch(const void* buffer, size_t len);
 ssize_t rcv_buffer_write(const void* buffer, size_t len);
 void rcv_buffer_clear();
 int rcv_buffer_destroy();
 
+
+
+
+/*							IMPLEMENTATIONS									*/
 
 /*
  *	Allocate memory for the receiver buffer queue with given dimensions

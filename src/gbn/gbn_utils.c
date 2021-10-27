@@ -1,5 +1,10 @@
 #include "gbn/gbn_utils.h"
 
+
+
+
+/*									INCLUDES								*/
+
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
@@ -12,8 +17,18 @@
 #include <arpa/inet.h>
 #include <time.h>
 
+
+
+
+/*							PRIVATE VARIABLES								*/
+
 //	Log file descriptor
 FILE* logfd;
+
+
+
+
+/*							IMPLEMENTATIONS									*/
 
 /*
  *	Opens the log file

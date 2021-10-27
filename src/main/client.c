@@ -98,12 +98,15 @@ int session() {
 	response = malloc(MAXLINE*sizeof(char));
 	filename = malloc(90*sizeof(char));
 
+	printf("Connecting to server.. ");
+	fflush(stdout);
+
 	//	Connecting to server
 	if(connect_to_server() < 0) {
-		perror("Couldn't connect to server. gbn_connect()");
+		perror("\nCouldn't connect to server. gbn_connect()");
 		return -1;
 	} else {
-		printf("Connected to server.\n");
+		printf("..done.\n");
 	}
 
 	while(1) {

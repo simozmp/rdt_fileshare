@@ -1,6 +1,11 @@
 #ifndef PACKET_H
 #define PACKET_H
 
+
+
+
+/*									INCLUDES								*/
+
 #include <sys/types.h>
 #include <stdint.h>
 #include "gbn/config.h"
@@ -11,7 +16,7 @@
 /*									TYPEDEFS								*/
 
 typedef struct {
-	int type;
+	uint8_t type;
 	unsigned int seqn;
 	unsigned int len;
 	unsigned char payload[PCKDATASIZE];
@@ -19,7 +24,7 @@ typedef struct {
 } datapkt_t;
 
 typedef struct {
-	int type;
+	uint8_t type;
 	unsigned int seqn;
 	uint16_t checksum;
 } servicepkt_t;

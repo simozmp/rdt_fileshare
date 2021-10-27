@@ -1,6 +1,6 @@
 # #> Rdt_fileshare: RDT over UDP client/server CLI app for filesharing
 
-This is a simple client/server application written in C, which implements Go Back N protocol in its own `read()`, `write()` functions to reliably send data with a UDP socket.
+This is a simple client/server application written in C, that uses custom Go Back N sockets to reliably send data using a UDP socket.
 
 ## Dependencies
 

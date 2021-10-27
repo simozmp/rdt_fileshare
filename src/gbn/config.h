@@ -2,14 +2,15 @@
 #define CONFIG_H
 
 //	Window size
-#define WIN				10
+#define WIN				12
 
 //	Default timeout (seconds and nanoseconds)
-#define TIMEOUT_S		0
-#define TIMEOUT_NS		50000000
+#define TIMEOUT_S	   0
+#define TIMEOUT_NS		005000000
+//                     .  .  .  .
 
 //	Incoming data buffer size
-#define LOSS_PROB		0.4
+#define LOSS_PROB		0.2
 
 //	Rtt estimation function flag (active: 1, not active: 0)
 #define RTT_EST			1
@@ -21,7 +22,7 @@
  */
 
 //	Data field size for a packet
-#define PCKDATASIZE		65400 	//	65535 is UDP pkt size
+#define PCKDATASIZE		65400 	//	65535 is UDP data field size
 
 //	Incoming data buffer size for UDP socket
 #define BUFFERSIZE		PCKDATASIZE*WIN

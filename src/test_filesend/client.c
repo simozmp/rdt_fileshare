@@ -1,25 +1,34 @@
 #include <string.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <arpa/inet.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <math.h>
 
 #include "../gbn/libgbn.h"
 #include "test_filesend/config.h"
 
-#define FILENAME "marktext-x86_64.AppImage"
+#define ITERATIONS 3
 
-int main() {
+/*
+ *	This application connects to a server, and ciclically sends the file passed as argument,
+ *	computing the average sending time.
+ *
+ */
+int main(int argc, char** argv) {
 
 	int socksd, n;
 	FILE* filedesc;
 	struct sockaddr_in servaddr;
 	void* buffer;
+	struct timeval start_time, end_time, elapsed_time, temp_time, sum_time, avg_time;
+	long long int avg_time_int, sum_time_int;
 
 	char* msg = malloc(30);
-	char* filepath = malloc(50);
+	char* filename = malloc(50);
 
 	// Retrieving a new socket
 	if((socksd = gbn_socket()) < 0) {
@@ -45,41 +54,71 @@ int main() {
 
 	buffer = malloc(STEP);
 
-	sprintf(filepath, "clientpool/%s", FILENAME);
+	sprintf(filename, "%s", argv[1]);
 
-	filedesc = fopen(filepath, "r");
+	sum_time.tv_sec = 0;
+	sum_time.tv_usec = 0;
 
-	sprintf(msg, FILENAME);
-	if(gbn_write(socksd, msg, strlen(msg)) < 0)
-		perror("gbn_write");
+	for(int i = 0; i < ITERATIONS; i++) {
 
-	//	Waiting for server to be ready
-	if((gbn_read(socksd, msg, 30)) < 0) {
-		perror("read error");
-	} else {
-		printf("response: %s\n", msg);
-	}
+		printf("Iteration %d: ", i+1);
+		fflush(stdout);
 
-	for(int i = 0; 1==1; i++)
-		if((n = fread(buffer,1,STEP,filedesc)) < 0) {
-			perror("fread");
-			break;
-		} else if(n == 0) {
-			printf("File over. All sent\n");
-			break;
+		filedesc = fopen(filename, "r");
+
+		sprintf(msg, "%s", argv[1]);
+		if(gbn_write(socksd, msg, strlen(msg)) < 0)
+			perror("gbn_write");
+
+		//	Waiting for server to be ready
+		if((gbn_read(socksd, msg, 30)) < 0) {
+			perror("read error");
 		} else {
-			printf("%d-th chunck ready to send. size %d..\t", i, n);
-			n = gbn_write(socksd, buffer, n);
-
-			if(n < 0)
-				perror("write error");
-			else
-				printf("Sent.\n");
+			printf("server ready\n");
 		}
 
-	printf("Telling the server i'm done.\n");
+		printf("Sending file..\n");
+		gettimeofday(&start_time, NULL);
 
-	sprintf(msg, "Done");
-	if(gbn_write(socksd, msg, strlen(msg)+1) < 0)
-		perror("gbn_write");
+		for(int i = 0; 1==1; i++)
+			if((n = fread(buffer,1,STEP,filedesc)) < 0) {
+				perror("fread");
+				break;
+			} else if(n == 0) {
+				printf("..sent.\n");
+				break;
+			} else {
+				n = gbn_write(socksd, buffer, n);
+
+				if(n < 0)
+					perror("write error");
+			}
+
+		gettimeofday(&end_time, NULL);
+
+		timersub(&end_time, &start_time, &elapsed_time);
+
+		printf("Sending took %ld.%ld seconds.\n",
+				elapsed_time.tv_sec, elapsed_time.tv_usec);
+
+		timeradd(&elapsed_time, &sum_time, &temp_time);
+		memcpy(&sum_time, &temp_time, sizeof(struct timeval));
+
+		printf("Telling the server i'm done.\n");
+
+		sprintf(msg, "Done");
+		if(gbn_write(socksd, msg, strlen(msg)+1) < 0)
+			perror("gbn_write");
+
+		sum_time_int = sum_time.tv_sec*1000000 + sum_time.tv_usec;
+		avg_time_int = sum_time_int/(i+1);
+		avg_time.tv_sec = avg_time_int/1000000;
+		avg_time.tv_usec = avg_time_int - 1000000*avg_time.tv_sec;
+
+		printf("Average sending time is %ld.%.6ld seconds.\n\n",
+				avg_time.tv_sec, avg_time.tv_usec);
+	}
+
+	gbn_shutdown(socksd);
+	gbn_close(socksd);
 }

@@ -68,7 +68,7 @@ pthread_t listening_thread_id = 0;
 //	GBN core variables for sending
 int base = -1;
 int next_seqn = -1;
-int expectedseqn = -1;
+int expected_seqn = -1;
 
 //	A buffer to store a copy all unacked pkts during retransmission phase
 datapkt_t* pkt_win;
@@ -84,10 +84,9 @@ struct itimerval null_timer;			//	A (0s0ns) timeout to stop the timer
 pthread_mutex_t core_mutex;
 
 //	pthread_cond to signal condition change
-pthread_cond_t conn_state_chng = PTHREAD_COND_INITIALIZER;	//	cond: (status changed)	(used during connection phase)
+pthread_cond_t conn_status_chng = PTHREAD_COND_INITIALIZER;	//	cond: (status changed)	(used during connection phase)
 pthread_cond_t base_chng = PTHREAD_COND_INITIALIZER;		//	cond: (base changed)
 pthread_cond_t conn_closed = PTHREAD_COND_INITIALIZER;		//	cond: (status == closed)
-
 
 //	A string to temporarily store a message to write into the log file
 char* log_msg;
@@ -97,22 +96,22 @@ char* log_msg;
 
 /*						PRIVATE FCTNS PROTOTYPES							*/
 
-int deliver_data(datapkt_t *pkt);
-void timeout_handler();
-void incoming_pkt_handler();
-int rtt_adj(struct timespec rtt_sample);
-void listen_routine(void* arg);		//	On separate thread
-void launch_listening_thread();
-void retransmission();				//	On separate thread
-int passive_close();
 int gbn_core_init();
 int gbn_core_fin();
-ssize_t send_pkt(int socketfd, datapkt_t *pkt);
-ssize_t send_ack(int socketfd, servicepkt_t *pkt);
+void incoming_pkt_handler();
+int estimate_rtt(struct timespec rtt_sample);
 int start_timer(const char* func_name);
 int stop_timer(const char* func_name);
+ssize_t send_pkt(int socketfd, datapkt_t *pkt);
+ssize_t send_ack(int socketfd, servicepkt_t *pkt);
+void launch_listening_thread();
 void lock_mutex(const char* func_name);
 void unlock_mutex(const char* func_name);
+void timeout_handler();
+int deliver_data(datapkt_t *pkt);			//	only called by the listening thread
+int passive_close();						//	only called by the listening thread
+void listen_routine(void* arg);				//	only called by the listening thread
+void retransmission();						//	only called by the listening thread
 
 
 
@@ -178,7 +177,7 @@ int gbnc_connect(int socketfd, const struct sockaddr *servaddr,
 	//	Waiting for synack
 	lock_mutex(__func__);
 	while(status == synsent)
-		pthread_cond_wait(&conn_state_chng, &core_mutex);
+		pthread_cond_wait(&conn_status_chng, &core_mutex);
 	unlock_mutex(__func__);
 
 	sprintf(log_msg, "Connection established. Remote address: %s", servaddr_p);
@@ -249,7 +248,7 @@ int gbnc_accept(int socketfd, struct sockaddr *addr, socklen_t addrlen) {
 		if(rcv_buffer_init(BUFFERSIZE)<0)
 			perror("rcv_buffer_init");
 
-		// Resetting buffer_pkt
+		// Resetting syn buffer
 		memset(&valid_syn, 0, sizeof(valid_syn));
 
 		log_write("Accepting.");
@@ -267,7 +266,7 @@ int gbnc_accept(int socketfd, struct sockaddr *addr, socklen_t addrlen) {
 		lock_mutex(__func__);
 		while(status != established) {
 			log_write("Waiting for ACK to finalize connection..");
-			pthread_cond_wait(&conn_state_chng, &core_mutex);
+			pthread_cond_wait(&conn_status_chng, &core_mutex);
 		}
 		unlock_mutex(__func__);
 
@@ -277,8 +276,6 @@ int gbnc_accept(int socketfd, struct sockaddr *addr, socklen_t addrlen) {
 
 		sprintf(log_msg, "Connection established. Remote address: %s", remote_addr_p);
 		log_write(log_msg);
-
-		status = established;
 
 		return_value = 1;
 
@@ -291,19 +288,30 @@ int gbnc_accept(int socketfd, struct sockaddr *addr, socklen_t addrlen) {
 	return return_value;
 }
 
+/*
+ *	This functions checks if socket is the gbn connection socket
+ *	Returns 0 if check passes, -1 otherwise
+ *
+ */
 int gbn_verify_socket(int socket) {
 	return socket == connsocket ? 0 : -1;
 }
 
 /*
- *	This function follows from the gbn FSM, it is used to send a single
- *	packet
+ *	This function follows from the gbn FSM, it is used to send a new single
+ *	data packet, transporting the content of the buffer pointed by data (len
+ *	specifies its size). Before sending the packet, the latter is pushed into
+ *	snd_buf.
+ *
+ *  Return value is the number of bytes pushed by the socket, or -1 in case
+ *	of error.
  *
  */
 ssize_t gbnc_send(void *data, size_t len) {
 	ssize_t return_value = 0;
 	ssize_t sent = 0;
 	datapkt_t pkt;
+	char* snd_buf_presentation;
 
 	errno = 0;		// Zero out errno
 
@@ -311,35 +319,40 @@ ssize_t gbnc_send(void *data, size_t len) {
 
 		if(len <= PCKDATASIZE) {	// If data fits a packet, send
 
+			//	Setting status to sending, when allowed
 			if(status != closewait && status != lastack) {
 				log_println();
 				log_write("status: sending");
 				status = sending;
 			}
 
+			//	Creating a new datapkt
 			if(make_datapkt(next_seqn, data, len, &pkt) < 0) {
-				printf("gbn_send(): make_datapkt error.");
+				log_write("gbn_send(): make_datapkt error.");
+				return -1;
 			}
 
-			//	Atomic core_mutex variables manipulation start--------------
 			lock_mutex(__func__);
 
-			//	Push the packet in the buffer (and wait for base to change while buffer full)
+			//	Trying to push the packet in the buffer
 			while(snd_buf_push(&pkt) < 0) {
 				log_write("gbn_send(): Waiting for buffer to have some space.");
+
+				//	Waiting for base to change
 				if(pthread_cond_wait(&base_chng, &core_mutex) < 0) {
 					sprintf(log_msg, "pthread_cond_wait() failed. (%s)", strerror(errno));
 					log_write(log_msg);
 				}
 			}
 
-			char* snd_buf_p_str = malloc(sizeof(char)*((WIN*10)+1));
-			snd_buf_p(snd_buf_p_str);
-			sprintf(log_msg, "gbn_send(): Pkt pushed in the sending buffer: %s", snd_buf_p_str);
-			free(snd_buf_p_str);
+			//	Printing snd_buf into log
+			snd_buf_presentation = malloc(sizeof(char)*((WIN*10)+1));
+			snd_buf_p(snd_buf_presentation);
+			sprintf(log_msg, "gbn_send(): Pkt pushed in the sending buffer: %s", snd_buf_presentation);
+			free(snd_buf_presentation);
 			log_write(log_msg);
 
-			//	Send the packet
+			//	Sending the packet (follows from gbn smd)
 			if((sent = send_pkt(connsocket, &pkt)) >= 0) {
 
 				//	Start timer for first packet of the window
@@ -363,8 +376,8 @@ ssize_t gbnc_send(void *data, size_t len) {
 			}
 
 			unlock_mutex(__func__);
-			//	Atomic core_mutex variables manipulation end----------------
-		} else {	//	This as well souldn't occur, as this function (gbn_send()) shall be only
+
+		} else {	//	This souldn't occur, as this function (gbn_send()) shall be only
 					//	invoked by gbn_write() in gbn.c, which checks the packet's size
 			log_write("gbn_send(): Message too long to fit a packet.");
 			return_value = -1;
@@ -380,6 +393,14 @@ ssize_t gbnc_send(void *data, size_t len) {
 	return return_value;
 }
 
+/*
+ *	This functions sends a single datapkt, and transparently discards it
+ *	with probability defined in the LOSS_PROB macro.
+ *
+ *	Return value is the number of bytes that could have been sent, or
+ *	-1 in case of error.
+ *
+ */
 ssize_t send_pkt(int socketfd, datapkt_t *pkt) {
 
 	int return_value;
@@ -413,6 +434,14 @@ ssize_t send_pkt(int socketfd, datapkt_t *pkt) {
 	return return_value;
 }
 
+/*
+ *	This functions sends a single servicepkt, and transparently discards it
+ *	with probability defined in the LOSS_PROB macro.
+ *
+ *	Return value is the number of bytes that could have been sent, or
+ *	-1 in case of error.
+ *
+ */
 ssize_t send_ack(int socketfd, servicepkt_t *pkt) {
 
 	int return_value;
@@ -438,6 +467,14 @@ ssize_t send_ack(int socketfd, servicepkt_t *pkt) {
 	return return_value;
 }
 
+/*
+ *	This function is used from the listening thread to deliver data to the
+ *	rcv_buf, which shall be read from the application by a gbn_read().
+ * 
+ *	Return value is the amount of data written into the rcv_buf, or -1
+ *	in case of error.
+ * 
+ */
 int deliver_data(datapkt_t *pkt) {
 	ssize_t return_value = 0;
 
@@ -448,7 +485,7 @@ int deliver_data(datapkt_t *pkt) {
 		log_write(log_msg);
 		perror("deliver_data");
 	} else {
-		sprintf(log_msg, "deliver_data(): Delivering packet n.%d.", pkt->seqn);
+		sprintf(log_msg, "deliver_data(): Packet n.%d delivered.", pkt->seqn);
 		log_write(log_msg);
 	}
 
@@ -456,12 +493,14 @@ int deliver_data(datapkt_t *pkt) {
 }
 
 /*
- *	Handles the timeout event
+ *	Signal handler for SIGALRM, this function launches a new retransmission thread,
+ *	or closes the connection if in timed wait state.
  *
  */
 void timeout_handler() {
 
 	pthread_t temp_thread_id;
+	int ret = -1;
 
 	errno = 0;
 
@@ -470,17 +509,19 @@ void timeout_handler() {
 
 	if(connsocket != -1) {
 		if(status == timedwait) {
-			if(pthread_create(&temp_thread_id, NULL, (void*)gbn_core_fin, NULL) != 0)
-				printf("pthread_create for timedwait failed %s", strerror(errno));
+			while(ret != 0)
+				if((ret = pthread_create(&temp_thread_id, NULL, (void*)gbn_core_fin, NULL)) != 0)
+					printf("pthread_create for timedwait failed %s", strerror(errno));
 		} else {
-			if(pthread_create(&temp_thread_id, NULL, (void*)retransmission, NULL) != 0)
+			while(ret != 0)
+				if((ret = pthread_create(&temp_thread_id, NULL, (void*)retransmission, NULL)) != 0)
 				printf("pthread_create for retransmission failed. %s", strerror(errno));
 		}
 	}
 }
 
 /*
- *	Handles the timeout event
+ *	Retransmission routine.
  *
  */
 void retransmission() {
@@ -536,46 +577,45 @@ void retransmission() {
 		break;
 	}
 
-	pthread_exit(NULL);
+	//	Necessary to free the thread memory before exiting
+	pthread_detach(pthread_self());
 
-	printf("THIS STRING SHOULD NEVER BE ON TERMINAL, IF YOU SEE IT THERE'S A PROBLEM.\n");
+	pthread_exit(NULL);
 }
 
 /*
- *	Handles incoming packets
+ *	Handles incoming packets.
  *
  */
 void incoming_pkt_handler() {
 
-	// Pointers for packet handling
-	datapkt_t *datapkt;
-	servicepkt_t *servicepkt;
+	unsigned char *buffer_pkt;		//	Pointer to the generic buffer
+	int n;							//	Bytes read
 
-	struct timespec measured_rtt;
+	datapkt_t *datapkt;				//	datapkt pointer, for handling the generic buffer as a datapkt
+	servicepkt_t *servicepkt;		//	servicepkt pointer, for handling the generic buffer as a servicepkt
 
-	measured_rtt.tv_nsec = 0;
-	measured_rtt.tv_sec = 0;
+	struct timespec measured_rtt;	//	measured rtt fot the datapkt
+		measured_rtt.tv_nsec = 0;
+		measured_rtt.tv_sec = 0;
 
-	// Pointer to a buffer
-	unsigned char *buffer_pkt;
+	char* snd_buf_presentation;
 
-	//	Bytes read
-	int n;
-
-	// Allocate space for the biggest packet, datapkt_t
+	//	Allocating space for the generic packet buffer (size of the largest one)
 	buffer_pkt = malloc(sizeof(datapkt_t));
 
-	memset(buffer_pkt, 0, sizeof(datapkt_t));	//	Zero out buffer_pkt
+	memset(buffer_pkt, 0, sizeof(datapkt_t));	//	Zeroing out &buffer_pkt
 
+	//	Printing a blank line into the log
 	log_println();
 
-	// Read packet
+	//	Reading packet
 	if((n = read(connsocket, buffer_pkt, sizeof(datapkt_t))) >= 0) {
 
-		// Check packet category
+		//	Checking packet category
 		switch(n) {
 
-			// Data packet handling
+			//	Data packet handling
 			case sizeof(datapkt_t):
 
 				datapkt = (datapkt_t*) buffer_pkt;
@@ -593,9 +633,9 @@ void incoming_pkt_handler() {
 						if(status != finwait2) {
 
 							//	Handling packet
-							if(datapkt->seqn == expectedseqn && status != sending) {
+							if(datapkt->seqn == expected_seqn && status != sending) {
 
-								if(expectedseqn == 1)		//	To stop the last ack timer for the connection handshake
+								if(expected_seqn == 1)		//	To stop the last ack timer for the connection handshake
 									stop_timer(__func__);
 
 								sprintf(log_msg, "incoming_pkt_handler(): datapkt incoming. seqn:%d. OK. Delivering.",
@@ -612,7 +652,7 @@ void incoming_pkt_handler() {
 
 								// Update expectedseqn (in isolation)
 								lock_mutex(__func__);
-								expectedseqn++;
+								expected_seqn++;
 								unlock_mutex(__func__);
 							} else {
 								if(status == sending) {
@@ -621,7 +661,7 @@ void incoming_pkt_handler() {
 									log_write(log_msg);
 								} else {
 									sprintf(log_msg, "incoming_pkt_handler(): datapkt incoming. seqn:%d. Not delivering as it is not the packet I expect (%d).",
-											datapkt->seqn, expectedseqn);
+											datapkt->seqn, expected_seqn);
 									log_write(log_msg);
 								}
 							}
@@ -682,7 +722,7 @@ void incoming_pkt_handler() {
 							lock_mutex(__func__);
 							status = established;
 							stop_timer(__func__);
-							pthread_cond_broadcast(&conn_state_chng);
+							pthread_cond_broadcast(&conn_status_chng);
 							unlock_mutex(__func__);
 						} else if(servicepkt->seqn < base + WIN &&
 							servicepkt->seqn >= base) {		//	Verifying seqn
@@ -710,16 +750,16 @@ void incoming_pkt_handler() {
 							measured_rtt = snd_buf_ack(servicepkt->seqn);
 
 							if(RTT_EST)
-								rtt_adj(measured_rtt);
+								estimate_rtt(measured_rtt);
 
 							sprintf(log_msg, "incoming_pkt_handler(): measured rtt for acked pkt %lds.%ldns", measured_rtt.tv_sec, measured_rtt.tv_nsec);
 							log_write(log_msg);
 							
 
-							char* snd_buf_p_str = malloc(sizeof(char)*((WIN*10)+1));
-							snd_buf_p(snd_buf_p_str);
-							sprintf(log_msg, "incoming_pkt_handler(): New base: %d. snd_buf is now %s", base, snd_buf_p_str);
-							free(snd_buf_p_str);
+							snd_buf_presentation = malloc(sizeof(char)*((WIN*10)+1));
+							snd_buf_p(snd_buf_presentation);
+							sprintf(log_msg, "incoming_pkt_handler(): New base: %d. snd_buf is now %s", base, snd_buf_presentation);
+							free(snd_buf_presentation);
 							log_write(log_msg);
 
 							//	Signal the base change
@@ -760,7 +800,7 @@ void incoming_pkt_handler() {
 
 						start_timer(__func__);
 
-						pthread_cond_broadcast(&conn_state_chng);
+						pthread_cond_broadcast(&conn_status_chng);
 
 						unlock_mutex(__func__);
 						break;
@@ -787,12 +827,11 @@ void incoming_pkt_handler() {
 }
 
 /*
+ *	This function is called from incoming_pkt_handler(), when detecting
+ *	a FIN or a FINACK. Here are defined all behaviours to switch between
+ *	closing statuses.
  *
- * 	This function is invoked in the listening thread when it recognizes a FIN pkt. This
- * 	sets the state to CLOSE_WAIT. In this state the peer can't receive datapkts, but can
- * 	send messages if it has to.
- *
- * 	Then sends a FIN and waits the LASTACK.
+ *	Return value is the connection status.
  *
  */
 int passive_close(int seqn) {
@@ -900,6 +939,13 @@ int passive_close(int seqn) {
 	return status;
 }
 
+/*
+ *	This function starts a 4 way handshake to close the connecion, and then
+ *	waits the status to be closed.
+ *
+ *	Return value is 0 in case of success, -1 otherwise.
+ * 
+ */
 int gbnc_shutdown(int socket) {
 
 	int return_value = -1;
@@ -908,9 +954,10 @@ int gbnc_shutdown(int socket) {
 
 		lock_mutex(__func__);
 
-
 		if(status == established || status == sending
 				|| valid_fin.seqn != 0) {
+
+			//	Sending a new FIN servicepkt
 			make_servicepkt(next_seqn, FIN, &valid_fin);
 			send_ack(connsocket, &valid_fin);
 
@@ -926,10 +973,10 @@ int gbnc_shutdown(int socket) {
 
 			return_value = 0;
 		} else if(status == closed) {
-			printf("Socket already closed.\n");
+			log_write("gbn_shutdown(): Called while in closed status.");
 			return_value = -1;
 		} else {
-			printf("Already trying to close connection, exiting with errors.\n");	//	gbnc_close already called
+			log_write("gbn_shutdown(): Called while already closing.");
 			return_value = -1;
 		}
 
@@ -939,17 +986,25 @@ int gbnc_shutdown(int socket) {
 	return return_value;
 }
 
+/*
+ *	This function closes the UDP socket, if the connection is closed (if not,
+ *	that would mean that a fork of the caller has an established connection to
+ *	the peer, so the UDP socket still can't be closed.
+ *
+ *	Return value is 0 in case of success, or -1 in case of error.
+ * 
+ */
 int gbnc_close(int socket) {
 	int return_value = -1;
 
 	errno = 0;
 
 	if(socket == connsocket) {
+		//	See fcn header
 		if(status == closed)
 			return_value = close(socket);
-		else {
-			return_value = -1;
-		}
+		else
+			return_value = 0;
 
 		gbn_core_fin();
 	} else
@@ -958,6 +1013,11 @@ int gbnc_close(int socket) {
 	return return_value;
 }
 
+/*
+ *	This functions waits for all the pkts in the window to be acked, and then
+ *	exits the sending status. This is called by gbn_send() to guarantee reliability.
+ *
+ */
 void wait_delivery() {
 
 	lock_mutex(__func__);
@@ -994,23 +1054,31 @@ void wait_delivery() {
 }
 
 /*
- *	This is the function that will be run on a separate thread,
- *	to catch incoming data via the select() syscall
+ *	This is the function to be run in the listening thread, to catch incoming data
+ *	via the select() syscall, and then call incoming_pkt_handler() to read them and respond.
  *
  */
 void listen_routine(void* arg) {
+
+	char log_msg_lr[80];
 	fd_set readset;
+
+	//	Predisposing the readset for the select()
 	FD_ZERO(&readset);
 	FD_SET(connsocket, &readset);
 
 	log_write("listen_routine(): Listening for incoming packets.");
 
-	while(select(connsocket + 1, &readset, NULL, NULL, NULL) == 1) {
-		incoming_pkt_handler();
-		log_write("listen_routine(): Listening again.");
-	}
+	while(1) {
 
-	log_write("listen_routine(): select() anomally stopped.");
+		while(select(connsocket + 1, &readset, NULL, NULL, NULL) == 1) {
+			incoming_pkt_handler();
+			log_write("listen_routine(): Listening again.");
+		}
+
+		sprintf(log_msg_lr, "listen_routine(): select() anomally stopped with errno=%d -> %s", errno, strerror(errno));
+		log_write("Starting select() again.");
+	}
 }
 
 /*
@@ -1035,7 +1103,13 @@ void cancel_listening_thread() {
 	pthread_cancel(listening_thread_id);
 }
 
-
+/*
+ *	This routine initializes the peer's connection by allocating buffers,
+ *	and configuring initial states of global variables.
+ *
+ *	Return value is -1 in case of error, 0 otherwise
+ *
+ */
 int gbn_core_init() {
 	int return_value;
 
@@ -1048,8 +1122,8 @@ int gbn_core_init() {
 
 	if(gbn_init != 1) {
 
+		//	Setting the null itimerval, used to stop the timer
 		null_timer.it_interval.tv_usec = null_timer.it_interval.tv_sec = 0;	//	So that the timer will trigger SIGALRM only once
-
 		null_timer.it_value.tv_sec = 0;
 		null_timer.it_value.tv_usec = 0;
 
@@ -1059,30 +1133,32 @@ int gbn_core_init() {
 		//	Allocate the send buffer for unacked pkts (of size WIN)
 		snd_buf_init(WIN);
 
+		//	Cleaning the valid_ack and valid_fin buffers
 		make_servicepkt(0, 0, &valid_ack);
+		make_servicepkt(0, 0, &valid_fin);
 
 		lock_mutex(__func__);
 
+		//	Allocating space for pkt_win, a buffer to temporarly save the
+		//	packets in the window for a retransmission
 		pkt_win = malloc(WIN*sizeof(datapkt_t));
 
+		//	Initializing timers
 		rtt_est.tv_nsec = 800000;
 		rtt_est.tv_sec = 0;
-
 		rtt_dev.tv_nsec = 80000;
 		rtt_dev.tv_sec = 0;
-
 		timer_timeout.tv_nsec = TIMEOUT_NS;
 		timer_timeout.tv_sec = TIMEOUT_S;
-
 		timed_wait_timeout.tv_nsec = 0;
 		timed_wait_timeout.tv_sec = 2;
 
+		//	Initializing core variables
 		base = 1;
 		next_seqn = 1;
-		expectedseqn = 1;
+		expected_seqn = 1;
 
-		make_servicepkt(0, 0, &valid_fin);
-
+		//	Save 0 for return value, and 1 for the init flag
 		return_value = 0;
 		gbn_init = 1;
 
@@ -1093,6 +1169,12 @@ int gbn_core_init() {
 	return return_value;
 }
 
+/*
+ *	This routine initializes the peer's connection.
+ *
+ *	Return value is -1 in case of error, 0 otherwise
+ *
+ */
 int gbn_core_fin() {
 
 	int return_value;
@@ -1111,7 +1193,7 @@ int gbn_core_fin() {
 
 		base = -1;
 		next_seqn = -1;
-		expectedseqn = -1;
+		expected_seqn = -1;
 
 		gbn_init = 0;
 		return_value = 0;
@@ -1139,7 +1221,10 @@ int gbn_core_fin() {
 	return return_value;
 }
 
-
+/*
+ *	Function to start a timer
+ *
+ */
 int start_timer(const char* func_name) {
 
 	int return_value;
@@ -1176,8 +1261,10 @@ int start_timer(const char* func_name) {
 	return return_value;
 }
 
-
-
+/*
+ *	Function to stop a timer
+ *
+ */
 int stop_timer(const char* func_name) {
 	struct itimerval timer_val_old;
 
@@ -1194,109 +1281,41 @@ int stop_timer(const char* func_name) {
 	return return_value;
 }
 
-
-
+/*
+ *	Function to lock the core mutex
+ *
+ */
 void lock_mutex(const char* func_name) {
 
 	int returned;
 
-	if((returned = pthread_mutex_trylock(&core_mutex)) == 0) {
-		sprintf(log_msg, "%s():\t\t\tLOCK", func_name);
-		log_write(log_msg);
-	} else if(returned == EBUSY) {
-		sprintf(log_msg, "%s():\t\t\tTRYLOCK......", func_name);
-		log_write(log_msg);
-
-		if((returned = pthread_mutex_lock(&core_mutex)) != 0) {
-			sprintf(log_msg, "%s():\t\t\t lock() failed with error (%s)", func_name, strerror(returned));
-			log_write(log_msg);
-		} else {
-			sprintf(log_msg, "%s():\t\t\t......LOCK", func_name);
-			log_write(log_msg);
-		}
-	} else {
-		sprintf(log_msg, "%s():\t\t\t trylock() failed with error (%s)", func_name, strerror(returned));
+	if((returned = pthread_mutex_lock(&core_mutex)) != 0) {
+		sprintf(log_msg, "%s():\t\t\t pthread_mutex_lock() failed with error (%s)", func_name, strerror(returned));
 		log_write(log_msg);
 	}
 }
-
-
-
-void unlock_mutex(const char* func_name) {
-
-	if(log_msg != NULL) {
-		sprintf(log_msg, "%s():\t\t\tUNLOCK", func_name);
-		log_write(log_msg);
-	}
-
-	pthread_mutex_unlock(&core_mutex);
-}
-
-
 
 /*
- *	I'd like to imagine the role of this function as a "sentinel", which verifies consistency
- *	in the GBN core variables.
- *
- *	When one of the conditions are violated, the function closes the application, and prints
- *	informations about system status.
- *
- *	NB Developing purpose function
+ *	Function to unlock the core mutex
  *
  */
-void integrity_check(const char* caller_fcn) {
+void unlock_mutex(const char* func_name) {
 
-	int violations = 0;
+	int returned;
 
-	if(next_seqn < base) {
-		sprintf(log_msg, "\n\nViolation occurred. next_seqn=%d < base=%d. Killing processes.", next_seqn, base);
-		log_write(log_msg);
-		fprintf(stderr, "%s", log_msg);
-		violations++;
-	} else if(next_seqn > base+WIN) {
-		sprintf(log_msg, "\n\nViolation occurred. next_seqn=%d > base=%d. Killing processes.", next_seqn, base);
-		log_write(log_msg);
-		fprintf(stderr, "%s", log_msg);
-		fprintf(stderr, "%s", log_msg);
-		violations++;
-	} else if(ts_max(rtt_est, timer_timeout) == 1) {
-		sprintf(log_msg, "\n\nViolation occurred. rtt_est > timer_timeout. Killing processes.");
-		log_write(log_msg);
-		fprintf(stderr, "%s", log_msg);
-		fprintf(stderr, "%s", log_msg);
-		violations++;
-	}
-
-	if(violations < 0) {
-
-		sprintf(log_msg, "\nintegrity_check() called by:%s()\n", caller_fcn);
-		log_write(log_msg);
-
-		fprintf(stderr, "%s", log_msg);
-
-		fprintf(stderr, "\ncore_variables status:\n");
-		fprintf(stderr, "%20s\t%d\n\n", "base", base);
-		fprintf(stderr, "%20s\t%d\n\n", "base + WIN", base+WIN);
-		fprintf(stderr, "%20s\t%d\n\n", "next_seqn", next_seqn);
-
-		fprintf(stderr, "\ntimer status:\n");
-		fprintf(stderr, "%20s\t%ld\".%ld\n\n", "timer_timeout", timer_timeout.tv_sec, timer_timeout.tv_nsec);
-		fprintf(stderr, "%20s\t%ld\".%ld\n\n", "rtt_est + WIN", rtt_est.tv_sec, rtt_est.tv_nsec);
-		fprintf(stderr, "%20s\t%ld\".%ld\n\n", "rtt_dev", rtt_dev.tv_sec, rtt_dev.tv_nsec);
-
-		fprintf(stderr, "\nsnd_buffer status:\n");
-		fprintf(stderr, "%20s\t%s\n\n", "snd_buf", snd_buf_p());
-
-		log_dump();
-
-		fprintf(stderr, "\nLog dumped, killing.\n");
-
-		raise(SIGKILL);
+	if((returned = pthread_mutex_unlock(&core_mutex)) != 0) {
+			sprintf(log_msg, "%s():\t\t\t pthread_mutex_unlock() failed with error (%s)", func_name, strerror(returned));
+			log_write(log_msg);
 	}
 }
 
-
-int rtt_adj(struct timespec rtt_sample) {
+/*
+ *	Function to compute a new round trip time estimation.
+ *
+ *	Returns 0 in case of success, -1 otherwise.
+ *
+ */
+int estimate_rtt(struct timespec rtt_sample) {
 
 	rtt_est = ts_sum(ts_times(rtt_est, (1-ALPHA)), ts_times(rtt_sample, ALPHA));
 

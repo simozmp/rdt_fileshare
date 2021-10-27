@@ -1,9 +1,18 @@
 #ifndef SND_BUF
 #define SND_BUF
 
+
+
+
+/*									INCLUDES								*/
+
 #include <pthread.h>
 #include "gbn/packet.h"
 
+
+
+
+/*								PROTOTYPES									*/
 
 int snd_buf_init(int size);
 int snd_buf_destroy();

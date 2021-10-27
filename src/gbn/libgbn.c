@@ -120,9 +120,8 @@ ssize_t gbn_write(int socket, void *buf, size_t len) {
 			// Computing data field lenght for the current packet
 			data_len = PCKDATASIZE < data_left ? PCKDATASIZE : data_left;
 
-			if((now_sent = gbnc_send(buf + (i*PCKDATASIZE), data_len)) == -1) {
-				perror("gbn_send");
-			}
+			if((now_sent = gbnc_send(buf + (i*PCKDATASIZE), data_len)) == -1)
+				return -1;		//	errno will be set
 
 			data_sent += data_len;
 		}
@@ -136,7 +135,9 @@ ssize_t gbn_write(int socket, void *buf, size_t len) {
 
 /*
  *	This functions tries to read up to count bytes from the output buffer,
- *	into the buffer starting at buf
+ *	into the buffer starting at buf.
+ *
+ *	The amount of actual read bytes returns to the caller. -1 is returned otherwise.
  *
  */
 ssize_t gbn_read(int socket, void *buf, size_t count) {
@@ -152,9 +153,8 @@ ssize_t gbn_read(int socket, void *buf, size_t count) {
 
 	else
 		//	Fetching count bytes from receiver buffer
-		if((data_read = rcv_buffer_fetch(buf, count)) < 0) {
-			perror("gbn_read");
-		}
+		if((data_read = rcv_buffer_fetch(buf, count)) < 0)
+			return -1;
 
 	return data_read;
 }
